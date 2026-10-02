@@ -1,0 +1,6 @@
+{
+  "source": "actual Docker failure recovery cast",
+  "recorded_duration_seconds": 65.001,
+  "rescheduled_after_kill_seconds": 14.927999999999999,
+  "completed_after_kill_seconds": 23.413999999999998
+}

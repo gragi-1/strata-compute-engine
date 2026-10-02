@@ -1,0 +1,166 @@
+[
+  {
+    "job": {
+      "id": "31c7638b-6b16-4630-b117-5f085dd40218",
+      "name": "benchmark-20261002T144630-eb7ec740-339",
+      "image": "strata/python-workloads:local",
+      "command": [
+        "python",
+        "/app/main.py",
+        "monte-carlo",
+        "--samples",
+        "100000"
+      ],
+      "status": "FAILED",
+      "priority": 0,
+      "cpu_required": 1.0,
+      "memory_required_mb": 128,
+      "max_retries": 0,
+      "timeout_seconds": 120,
+      "attempts_count": 1,
+      "retry_count": 0,
+      "created_at": "2026-10-02T14:46:38.505343Z",
+      "scheduled_at": "2026-10-02T14:47:54.345144Z",
+      "started_at": null,
+      "finished_at": "2026-10-02T14:48:24.794041Z"
+    },
+    "attempts": [
+      {
+        "id": "47423afc-f834-48fa-8cb1-48d77577005e",
+        "job_id": "31c7638b-6b16-4630-b117-5f085dd40218",
+        "number": 1,
+        "worker_id": "worker-cpp",
+        "lease_expires_at": "2026-10-02T14:48:24.345144Z",
+        "status": "FAILED",
+        "scheduled_at": "2026-10-02T14:47:54.345144Z",
+        "eligible_at": "2026-10-02T14:46:38.505343Z",
+        "started_at": null,
+        "finished_at": "2026-10-02T14:48:24.794041Z",
+        "exit_code": null,
+        "reason": "lease expired"
+      }
+    ],
+    "events": [
+      {
+        "id": 904,
+        "job_id": "31c7638b-6b16-4630-b117-5f085dd40218",
+        "attempt_id": null,
+        "kind": "JOB_CREATED",
+        "created_at": "2026-10-02T14:46:38.505343Z",
+        "details": {}
+      },
+      {
+        "id": 905,
+        "job_id": "31c7638b-6b16-4630-b117-5f085dd40218",
+        "attempt_id": null,
+        "kind": "JOB_QUEUED",
+        "created_at": "2026-10-02T14:46:38.505343Z",
+        "details": {}
+      },
+      {
+        "id": 3461,
+        "job_id": "31c7638b-6b16-4630-b117-5f085dd40218",
+        "attempt_id": "47423afc-f834-48fa-8cb1-48d77577005e",
+        "kind": "JOB_SCHEDULED",
+        "created_at": "2026-10-02T14:47:54.345144Z",
+        "details": {}
+      },
+      {
+        "id": 3812,
+        "job_id": "31c7638b-6b16-4630-b117-5f085dd40218",
+        "attempt_id": "47423afc-f834-48fa-8cb1-48d77577005e",
+        "kind": "JOB_FAILED",
+        "created_at": "2026-10-02T14:48:24.794041Z",
+        "details": {
+          "reason": "lease expired"
+        }
+      }
+    ]
+  },
+  {
+    "job": {
+      "id": "c1cedc3c-58b4-410e-b72f-86a33d2f286f",
+      "name": "benchmark-20261002T144630-eb7ec740-336",
+      "image": "strata/python-workloads:local",
+      "command": [
+        "python",
+        "/app/main.py",
+        "monte-carlo",
+        "--samples",
+        "100000"
+      ],
+      "status": "FAILED",
+      "priority": 0,
+      "cpu_required": 1.0,
+      "memory_required_mb": 128,
+      "max_retries": 0,
+      "timeout_seconds": 120,
+      "attempts_count": 1,
+      "retry_count": 0,
+      "created_at": "2026-10-02T14:46:38.433325Z",
+      "scheduled_at": "2026-10-02T14:47:53.605976Z",
+      "started_at": "2026-10-02T14:47:54.113731Z",
+      "finished_at": "2026-10-02T14:48:24.091228Z"
+    },
+    "attempts": [
+      {
+        "id": "ee350655-fef4-48ae-84ff-0a3fe4af6f11",
+        "job_id": "c1cedc3c-58b4-410e-b72f-86a33d2f286f",
+        "number": 1,
+        "worker_id": "worker-cpp",
+        "lease_expires_at": "2026-10-02T14:48:23.605976Z",
+        "status": "FAILED",
+        "scheduled_at": "2026-10-02T14:47:53.605976Z",
+        "eligible_at": "2026-10-02T14:46:38.433325Z",
+        "started_at": "2026-10-02T14:47:54.113731Z",
+        "finished_at": "2026-10-02T14:48:24.091228Z",
+        "exit_code": null,
+        "reason": "lease expired"
+      }
+    ],
+    "events": [
+      {
+        "id": 898,
+        "job_id": "c1cedc3c-58b4-410e-b72f-86a33d2f286f",
+        "attempt_id": null,
+        "kind": "JOB_CREATED",
+        "created_at": "2026-10-02T14:46:38.433325Z",
+        "details": {}
+      },
+      {
+        "id": 899,
+        "job_id": "c1cedc3c-58b4-410e-b72f-86a33d2f286f",
+        "attempt_id": null,
+        "kind": "JOB_QUEUED",
+        "created_at": "2026-10-02T14:46:38.433325Z",
+        "details": {}
+      },
+      {
+        "id": 3449,
+        "job_id": "c1cedc3c-58b4-410e-b72f-86a33d2f286f",
+        "attempt_id": "ee350655-fef4-48ae-84ff-0a3fe4af6f11",
+        "kind": "JOB_SCHEDULED",
+        "created_at": "2026-10-02T14:47:53.605976Z",
+        "details": {}
+      },
+      {
+        "id": 3455,
+        "job_id": "c1cedc3c-58b4-410e-b72f-86a33d2f286f",
+        "attempt_id": "ee350655-fef4-48ae-84ff-0a3fe4af6f11",
+        "kind": "JOB_RUNNING",
+        "created_at": "2026-10-02T14:47:54.113731Z",
+        "details": {}
+      },
+      {
+        "id": 3801,
+        "job_id": "c1cedc3c-58b4-410e-b72f-86a33d2f286f",
+        "attempt_id": "ee350655-fef4-48ae-84ff-0a3fe4af6f11",
+        "kind": "JOB_FAILED",
+        "created_at": "2026-10-02T14:48:24.091228Z",
+        "details": {
+          "reason": "lease expired"
+        }
+      }
+    ]
+  }
+]

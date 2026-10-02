@@ -1,0 +1,8 @@
+name: monte-carlo-pi
+image: strata/python-workloads:local
+command: [python, /app/main.py, monte-carlo, --samples, '2000000']
+resources: {cpu: 1, memory_mb: 256}
+capabilities: [python]
+priority: 5
+max_retries: 3
+timeout_seconds: 120

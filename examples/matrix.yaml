@@ -1,0 +1,7 @@
+name: matrix-multiplication
+image: strata/python-workloads:local
+command: [python, /app/main.py, matrix, --size, '2000']
+resources: {cpu: 1, memory_mb: 512}
+capabilities: [python]
+max_retries: 2
+timeout_seconds: 120

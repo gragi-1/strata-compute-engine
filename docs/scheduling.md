@@ -1,0 +1,11 @@
+# Scheduling and concurrency
+
+Eligible jobs are queued or retrying with `eligible_at <= database time`. Default ordering is descending priority, then creation time and UUID. FIFO ignores priority. A bounded batch limits lock scope; jobs too large for current workers remain queued while smaller jobs in the batch can fit. Strict priorities and bounded scans can starve lower-priority or unschedulable workloads; no fairness guarantee is claimed.
+
+A worker must be healthy, have a fresh heartbeat and contain every requested capability. Effective free resources are the minimum of its advertised availability and total capacity minus durable reservations. Both CPU and RAM must fit. Worker observations are conservative signals: host memory availability and load averages can reduce placement capacity, while reservations prevent trusting inflated reports. Host measurements and configured budgets do not create a global hardware quota across separately registered logical workers.
+
+Least-loaded maximizes normalized unreserved CPU plus normalized unreserved RAM. Best-fit minimizes that score among fitting candidates. FIFO still uses least-loaded worker placement. Equal scores use deterministic worker-ID order. This is intentionally small enough to understand and benchmark; more elaborate bin packing needs measured evidence.
+
+Multiple schedulers skip locked jobs and workers. Transactions can retain several worker locks per batch, reducing parallelism even though correctness is maintained. Batch size and lock contention are explicit benchmark dimensions. PostgreSQL documents `SKIP LOCKED` as suitable for queue consumers, while warning that its skipped view is inconsistent for general reads: [SELECT documentation](https://www.postgresql.org/docs/17/sql-select.html).
+
+Queue admission counts all unfinished jobs, including running jobs and delayed retries. This bounds accepted outstanding work rather than only waiting rows. Each worker also has a separate container-count limit (`STRATA_WORKER_MAX_JOBS`, default 16); tiny fractional CPU requests cannot bypass this bound. Idempotent duplicate submissions are returned even at capacity. API overflow returns 429 with `Retry-After: 2`; a client should retain its idempotency key when retrying an ambiguous submit.

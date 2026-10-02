@@ -1,0 +1,112 @@
+name: strata
+x-settings: &settings
+  STRATA_DATABASE_URL: postgresql+psycopg://strata:strata@postgres:5432/strata
+  STRATA_WORKER_TOKEN: ${STRATA_WORKER_TOKEN:-local-development-token}
+  STRATA_ALLOWED_IMAGES: '["strata/python-workloads:local","strata/wave-solver:local"]'
+  STRATA_ARTIFACT_ROOT: /app/data/artifacts
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+x-app: &app
+  build: .
+  image: strata/control-plane:local
+  environment: *settings
+  restart: unless-stopped
+  depends_on:
+    migrate: {condition: service_completed_successfully}
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment: {POSTGRES_DB: strata, POSTGRES_USER: strata, POSTGRES_PASSWORD: strata}
+    ports: ["127.0.0.1:${STRATA_POSTGRES_PORT:-55433}:5432"]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U strata -d strata"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  migrate:
+    build: .
+    image: strata/control-plane:local
+    environment: *settings
+    command: [alembic, upgrade, head]
+    depends_on:
+      postgres: {condition: service_healthy}
+  api:
+    <<: *app
+    ports: ["127.0.0.1:8000:8000"]
+    volumes: ["artifacts:/app/data/artifacts"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+  rpc:
+    <<: *app
+    command: [strata-rpc]
+    ports: ["127.0.0.1:50051:50051"]
+    volumes: ["artifacts:/app/data/artifacts"]
+  scheduler:
+    <<: *app
+    command: [strata-scheduler]
+  worker-1:
+    <<: *app
+    user: root
+    command: [strata-worker]
+    environment:
+      <<: *settings
+      STRATA_RPC_TARGET: rpc:50051
+      STRATA_WORKER_ID: worker-1
+      STRATA_WORKER_CPU: '2'
+      STRATA_WORKER_MEMORY_MB: '1024'
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
+  worker-2:
+    <<: *app
+    user: root
+    command: [strata-worker]
+    environment:
+      <<: *settings
+      STRATA_RPC_TARGET: rpc:50051
+      STRATA_WORKER_ID: worker-2
+      STRATA_WORKER_CPU: '2'
+      STRATA_WORKER_MEMORY_MB: '1024'
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
+  worker-cpp:
+    build: {context: ., dockerfile: worker_cpp/Dockerfile}
+    image: strata/worker-cpp:local
+    restart: unless-stopped
+    environment:
+      STRATA_RPC_TARGET: rpc:50051
+      STRATA_WORKER_ID: worker-cpp
+      STRATA_WORKER_TOKEN: ${STRATA_WORKER_TOKEN:-local-development-token}
+      STRATA_WORKER_CPU: '2'
+      STRATA_WORKER_MEMORY_MB: '1024'
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+  python-workloads:
+    build: workloads/python
+    image: strata/python-workloads:local
+    command: [python, -c, "print('Python workload image ready')"]
+    restart: 'no'
+  wave-workload:
+    build: workloads/wave_solver
+    image: strata/wave-solver:local
+    command: [/solver, --nx, '128', --steps, '100']
+    restart: 'no'
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    ports: ["127.0.0.1:9090:9090"]
+    volumes: ["./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+  grafana:
+    image: grafana/grafana:11.6.0
+    ports: ["127.0.0.1:3000:3000"]
+    environment: {GF_AUTH_ANONYMOUS_ENABLED: 'true', GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer}
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+  jaeger:
+    image: jaegertracing/all-in-one:1.65.0
+    environment: {COLLECTOR_OTLP_ENABLED: 'true'}
+    ports: ["127.0.0.1:16686:16686"]
+volumes:
+  postgres-data:
+  artifacts:

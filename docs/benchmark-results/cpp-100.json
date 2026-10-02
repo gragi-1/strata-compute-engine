@@ -1,0 +1,111 @@
+{
+  "measured_at": "2026-10-02T15:26:28.148748+00:00",
+  "kind": "live-container-deployment",
+  "client_environment": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.5",
+    "cpu": "Intel64 Family 6 Model 141 Stepping 1, GenuineIntel",
+    "logical_cpus": 16
+  },
+  "local_docker_daemon": {
+    "NCPU": 16,
+    "MemTotal": 8173215744,
+    "OperatingSystem": "Docker Desktop (containerized)",
+    "ServerVersion": "29.8.1"
+  },
+  "workers": [
+    {
+      "id": "worker-1",
+      "status": "HEALTHY",
+      "cpu_total": 2.0,
+      "memory_total_mb": 1024,
+      "cpu_available": 2.0,
+      "memory_available_mb": 1024,
+      "cpu_reserved": 0.0,
+      "memory_reserved_mb": 0,
+      "running_jobs": 0,
+      "capabilities": [
+        "python",
+        "cpp",
+        "worker-python",
+        "node:worker-1"
+      ],
+      "last_heartbeat": "2026-10-02T15:25:26.264782Z",
+      "heartbeats_count": 638,
+      "failures_count": 6
+    },
+    {
+      "id": "worker-2",
+      "status": "HEALTHY",
+      "cpu_total": 2.0,
+      "memory_total_mb": 1024,
+      "cpu_available": 2.0,
+      "memory_available_mb": 1024,
+      "cpu_reserved": 0.0,
+      "memory_reserved_mb": 0,
+      "running_jobs": 0,
+      "capabilities": [
+        "python",
+        "cpp",
+        "worker-python",
+        "node:worker-2"
+      ],
+      "last_heartbeat": "2026-10-02T15:25:27.122407Z",
+      "heartbeats_count": 652,
+      "failures_count": 5
+    },
+    {
+      "id": "worker-cpp",
+      "status": "HEALTHY",
+      "cpu_total": 2.0,
+      "memory_total_mb": 1024,
+      "cpu_available": 2.0,
+      "memory_available_mb": 1024,
+      "cpu_reserved": 0.0,
+      "memory_reserved_mb": 0,
+      "running_jobs": 0,
+      "capabilities": [
+        "python",
+        "cpp",
+        "worker-cpp",
+        "node:worker-cpp"
+      ],
+      "last_heartbeat": "2026-10-02T15:25:24.042932Z",
+      "heartbeats_count": 642,
+      "failures_count": 7
+    }
+  ],
+  "eligible_workers": [
+    "worker-cpp"
+  ],
+  "workers_used": [
+    "worker-cpp"
+  ],
+  "parameters": {
+    "api": "http://localhost:8000",
+    "jobs": 100,
+    "concurrency": 16,
+    "samples": 100000,
+    "max_retries": 3,
+    "implementation": "cpp",
+    "worker_id": "worker-cpp",
+    "timeout": 1800,
+    "output": "docs\\benchmark-results\\cpp-100.json"
+  },
+  "jobs": 100,
+  "succeeded": 100,
+  "attempts_total": 100,
+  "jobs_retried": 0,
+  "elapsed_seconds": 60.47250070000155,
+  "successful_jobs_per_second": 1.6536441993045847,
+  "submit_latency_seconds": {
+    "p50": 0.015505600000324193,
+    "p95": 2.2677064999988943,
+    "p99": 2.314834900000278
+  },
+  "scheduling_latency_seconds": {
+    "p50": 28.928068,
+    "p95": 52.422605,
+    "p99": 54.480623
+  }
+}

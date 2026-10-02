@@ -1,0 +1,29 @@
+syntax = "proto3";
+package strata.v1;
+
+// Worker credentials are transported as bearer authorization metadata on every RPC.
+service WorkerControl {
+  rpc Register(RegisterRequest) returns (RegisterReply);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatReply);
+  rpc Poll(PollRequest) returns (PollReply);
+  rpc Start(AttemptRequest) returns (Empty);
+  rpc Complete(CompleteRequest) returns (Empty);
+  rpc PutLogs(LogsRequest) returns (Empty);
+  rpc PutArtifact(ArtifactRequest) returns (ArtifactReply);
+}
+message Empty {}
+message RegisterRequest { string worker_id = 1; double cpu_total = 2; int64 memory_total_mb = 3; repeated string capabilities = 4; }
+message RegisterReply { string session_id = 1; double heartbeat_interval = 2; double lease_seconds = 3; int32 termination_grace_seconds = 4; }
+message Lease { string attempt_id = 1; string lease_token = 2; }
+message HeartbeatRequest { string worker_id = 1; string session_id = 2; double cpu_available = 3; int64 memory_available_mb = 4; repeated Lease leases = 5; }
+message LeaseCommand { string attempt_id = 1; bool valid = 2; bool cancel = 3; double lease_seconds = 4; }
+message HeartbeatReply { repeated LeaseCommand commands = 1; }
+message PollRequest { string worker_id = 1; string session_id = 2; }
+message Assignment { string attempt_id = 1; string lease_token = 2; string job_id = 3; string image = 4; repeated string command = 5; double cpu = 6; int64 memory_mb = 7; int32 timeout_seconds = 8; double lease_seconds = 9; string traceparent = 10; }
+message PollReply { repeated Assignment assignments = 1; }
+message AttemptRequest { string attempt_id = 1; string session_id = 2; string lease_token = 3; }
+enum Outcome { OUTCOME_UNSPECIFIED = 0; SUCCEEDED = 1; FAILED = 2; TIMED_OUT = 3; CANCELLED = 4; }
+message CompleteRequest { AttemptRequest credentials = 1; Outcome outcome = 2; int32 exit_code = 3; string reason = 4; }
+message LogsRequest { AttemptRequest credentials = 1; string content = 2; }
+message ArtifactRequest { AttemptRequest credentials = 1; string name = 2; string content_type = 3; bytes content = 4; }
+message ArtifactReply { string id = 1; string sha256 = 2; int64 size = 3; }

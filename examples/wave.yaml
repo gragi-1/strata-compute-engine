@@ -1,0 +1,8 @@
+name: wave-simulation
+image: strata/wave-solver:local
+command: [/solver, --nx, '4000', --steps, '10000', --output, /output/wave.csv]
+resources: {cpu: 1, memory_mb: 128}
+capabilities: [cpp]
+priority: 5
+max_retries: 3
+timeout_seconds: 600

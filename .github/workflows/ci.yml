@@ -1,0 +1,54 @@
+name: CI
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env: {POSTGRES_DB: strata_test, POSTGRES_USER: strata, POSTGRES_PASSWORD: strata}
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U strata -d strata_test"
+          --health-interval 2s --health-timeout 2s --health-retries 30
+    env:
+      STRATA_TEST_POSTGRES_URL: postgresql+psycopg://strata:strata@localhost:5432/strata_test
+      STRATA_DATABASE_URL: postgresql+psycopg://strata:strata@localhost:5432/strata_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: {version: '0.9.18', python-version: '3.12'}
+      - run: uv sync --locked
+      - run: uv run ruff check . && uv run ruff format --check . && uv run mypy
+      - run: uv run alembic upgrade head && uv run alembic check
+      - run: uv run pytest --cov --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        with: {name: coverage, path: coverage.xml}
+  cpp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libgrpc++-dev protobuf-compiler-grpc libprotobuf-dev protobuf-compiler libcurl4-openssl-dev libarchive-dev nlohmann-json3-dev
+      - run: cmake -S worker_cpp -B build/cpp -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/cpp -j2 && ctest --test-dir build/cpp --output-on-failure
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: {version: '0.9.18', python-version: '3.12'}
+      - run: uv sync --locked
+      - run: docker compose up --build -d
+      - run: uv run python scripts/e2e_live.py
+      - run: uv run python scripts/partition_probe.py
+      - run: uv run python scripts/failure_demo.py --samples 10000000 --min-duration 0
+      - if: always()
+        run: docker compose logs --no-color > compose.log
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: deployment-evidence, path: "compose.log\ndocs/demo/*.cast\ndocs/demo/*.json"}
+      - if: always()
+        run: docker compose down -v

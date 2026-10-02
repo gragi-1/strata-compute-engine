@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "strata-compute-engine"
+version = "1.0.0"
+description = "Durable, lease-based distributed execution of containerized compute workloads"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+  "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "pydantic-settings>=2.7,<3",
+  "sqlalchemy>=2.0.38,<2.1", "psycopg[binary]>=3.2,<4", "alembic>=1.14,<2",
+  "httpx>=0.28,<1", "docker>=7.1,<8", "prometheus-client>=0.21,<1",
+  "typer>=0.15,<1", "pyyaml>=6.0,<7",
+  "grpcio>=1.81.1,<2", "protobuf>=6.33.5,<7",
+  "opentelemetry-sdk>=1.30,<2", "opentelemetry-exporter-otlp-proto-grpc>=1.30,<2",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.3,<9", "pytest-cov>=6,<8", "ruff>=0.11,<1", "mypy>=1.15,<2", "types-PyYAML>=6", "pre-commit>=4,<5", "grpcio-tools>=1.70,<2", "pillow>=11.3,<13"]
+
+[project.scripts]
+strata = "cli.main:app"
+strata-scheduler = "scheduler.main:main"
+strata-worker = "worker.agent:main"
+strata-rpc = "control_plane.rpc.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["control_plane", "scheduler", "worker", "cli"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [".uv-*", "control_plane/rpc/engine_pb2.py", "control_plane/rpc/engine_pb2_grpc.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["control_plane", "scheduler", "worker", "cli"]
+exclude = ["engine_pb2.py", "engine_pb2_grpc.py"]
+[[tool.mypy.overrides]]
+module = ["docker", "docker.*", "grpc", "grpc.*"]
+ignore_missing_imports = true
+[[tool.mypy.overrides]]
+module = ["control_plane.rpc.engine_pb2", "control_plane.rpc.engine_pb2_grpc"]
+ignore_errors = true
+follow_imports = "skip"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = ["postgres: requires STRATA_TEST_POSTGRES_URL", "docker: requires a running Docker daemon"]
+
+[tool.coverage.run]
+source = ["control_plane", "scheduler"]
+omit = ["scheduler/main.py", "*/engine_pb2.py", "*/engine_pb2_grpc.py"]
+[tool.coverage.report]
+show_missing = true
+fail_under = 85
