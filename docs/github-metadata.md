@@ -1,6 +1,8 @@
 # GitHub repository metadata
 
-Suggested repository name: `strata-compute-engine`.
+Repository: [gragi-1/strata-compute-engine](https://github.com/gragi-1/strata-compute-engine).
+
+Repository name: `strata-compute-engine`.
 
 Description:
 
@@ -15,4 +17,14 @@ distributed-systems distributed-computing python cpp fastapi postgresql docker
 scheduler fault-tolerance observability systems-programming backend grpc
 ```
 
-The local repository has no configured remote. Add the CI badge using the actual owner/repository only after the GitHub workflow has passed. Local validation and CI configuration do not establish remote CI status.
+## CI status
+
+[CI run 37030111939](https://github.com/gragi-1/strata-compute-engine/actions/runs/37030111939) passed on **2026-10-02** for commit [9d6874d](https://github.com/gragi-1/strata-compute-engine/commit/9d6874da7ef88601f952c1bb4d475913edb14685). All three jobs (`python`, `cpp` and `docker`) completed successfully. See [validation evidence](validation.md) for the checks performed and their scope.
+
+The README can use this badge, which reports the workflow's current status:
+
+```markdown
+[![CI](https://github.com/gragi-1/strata-compute-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/gragi-1/strata-compute-engine/actions/workflows/ci.yml)
+```
+
+Keep repository descriptions, release titles, release notes and documentation in English.

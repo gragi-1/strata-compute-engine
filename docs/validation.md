@@ -27,6 +27,18 @@ The PostgreSQL tests exercise concurrent identical submissions, exact admission 
 
 The coverage scope excludes generated Protobuf modules and the scheduler process entry point. Worker behavior is tested separately; the stated percentage is not coverage of every Python/C++ line. The suite emits one upstream Starlette warning about its httpx TestClient integration; no test fails because of it.
 
+## GitHub Actions
+
+The project is published at [gragi-1/strata-compute-engine](https://github.com/gragi-1/strata-compute-engine). [CI run 37030111939](https://github.com/gragi-1/strata-compute-engine/actions/runs/37030111939) completed successfully on **2026-10-02** for commit [9d6874d](https://github.com/gragi-1/strata-compute-engine/commit/9d6874da7ef88601f952c1bb4d475913edb14685).
+
+| Job | Verified checks | Result |
+|---|---|---|
+| [python](https://github.com/gragi-1/strata-compute-engine/actions/runs/37030111939/job/110914518983) | Ruff lint/format, strict mypy, migrations, tests with PostgreSQL and coverage | Passed |
+| [cpp](https://github.com/gragi-1/strata-compute-engine/actions/runs/37030111939/job/110914519469) | Complete C++ worker build and CTest | Passed |
+| [docker](https://github.com/gragi-1/strata-compute-engine/actions/runs/37030111939/job/110914519357) | Compose build, live end-to-end execution, RPC outage probe and worker failure recovery | Passed |
+
+These checks ran on fresh GitHub-hosted Ubuntu runners. The recorded result applies to the cited commit; subsequent pushes trigger their own validation runs. The local benchmark and demo measurements above remain evidence from the stated local environment.
+
 ## Reproduce
 
 ```bash
@@ -49,4 +61,4 @@ See [measured benchmarks](benchmarks.md), [recovery recording](demo.md) and the 
 
 ## Release boundaries
 
-The repository has no GitHub remote. Actions are configured but have **not** run remotely; there is no fabricated passing badge or published release. Local validation establishes this implementation's behavior in the stated environment, not production availability or multi-host scalability. At-least-once side effects, orphan overlap, trusted Docker-socket agents, local REST security and manual retention are documented in [fault tolerance](fault-tolerance.md) and [security](security.md).
+Local verification and the successful GitHub Actions run establish this implementation's behavior in the tested environments. They do not establish production availability or multi-host scalability. At-least-once side effects, orphan overlap, trusted Docker-socket agents, local REST security and manual retention are documented in [fault tolerance](fault-tolerance.md) and [security](security.md).
