@@ -1,5 +1,7 @@
 # Strata
 
+[![CI](https://github.com/gragi-1/strata-compute-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/gragi-1/strata-compute-engine/actions/workflows/ci.yml)
+
 Fault-tolerant distributed execution of containerized Python and C++ compute workloads, backed by PostgreSQL, fenced leases and resource-aware scheduling.
 
 ## Why?
