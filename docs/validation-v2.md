@@ -1,6 +1,6 @@
 # v2 workspace validation
 
-This page records actual local checks performed on **2026-10-03** (Europe/Madrid), during preparation of v2.0.0, including follow-up validation after its first GitHub Actions run. These results are separate from [v1's historical CI evidence](validation.md). Consult [workflow runs](https://github.com/gragi-1/strata-compute-engine/actions/workflows/ci.yml) for verification of pushed commits; local results do not assert a GitHub CI outcome.
+This page records actual local checks performed on **2026-10-03** (Europe/Madrid), during preparation of v2.0.0, and the verified GitHub Actions result for the corrected implementation. These results are separate from [v1's historical CI evidence](validation.md). The local checks and GitHub run are identified separately below; each CI result applies only to its cited commit.
 
 ## Environment and evidence
 
@@ -48,9 +48,21 @@ Failures encountered during development were corrected and rerun: new non-null J
 
 The PostgreSQL concurrency test expected 100 assignments after 40 calls per scheduler. That fixed call count did not account for an arbitrary number of empty calls under contention; both job and worker selection already used `FOR UPDATE SKIP LOCKED`. A scheduler can return zero while another transaction holds the worker rows. The original test reproduced locally with only 91 assignments. The corrected test retries within a 30-second deadline, still requires exactly 100 unique first attempts and verifies each worker's CPU, RAM and container reservations. A separate deterministic test holds the worker lock, verifies that the job stays queued without reservations, then checks successful assignment after releasing the lock. Both cases passed ten independent repetitions each.
 
-The C++ job rejected the `decltype(&std::fclose)` deleter under `-Werror=ignored-attributes`. Both temporary-file sites now use a shared `FileCloser` and `File` RAII wrapper, retaining automatic file closure and the existing warnings-as-errors policy. The complete worker rebuilt under local GCC 11.4 and both CTest cases passed. The Ubuntu runner's compiler still needs verification in the next pushed CI run.
+The C++ job rejected the `decltype(&std::fclose)` deleter under `-Werror=ignored-attributes`. Both temporary-file sites now use a shared `FileCloser` and `File` RAII wrapper, retaining automatic file closure and the existing warnings-as-errors policy. The complete worker rebuilt under local GCC 11.4 and both CTest cases passed. The subsequent Ubuntu 24.04 CI build also passed, as recorded below.
 
-Follow-up local validation passed all **93 Python tests**, including all **seven PostgreSQL tests**, with **93.38%** coverage. A successful GitHub run for the corrected commit remains required before tagging or publishing v2.0.0.
+Follow-up local validation passed all **93 Python tests**, including all **seven PostgreSQL tests**, with **93.38%** coverage.
+
+## GitHub Actions
+
+[CI run 37118048929](https://github.com/gragi-1/strata-compute-engine/actions/runs/37118048929) completed successfully on **2026-10-03** for commit [f7a518c](https://github.com/gragi-1/strata-compute-engine/commit/f7a518c63a179ff9fe3478360a5ebdd9ba602ce6). All three jobs passed on fresh Ubuntu 24.04 runners.
+
+| Job | Verified checks | Result |
+|---|---|---|
+| [python](https://github.com/gragi-1/strata-compute-engine/actions/runs/37118048929/job/111188579358) | JavaScript syntax, Ruff lint/format, strict mypy, migrations, tests with PostgreSQL 17 and coverage | Passed |
+| [cpp](https://github.com/gragi-1/strata-compute-engine/actions/runs/37118048929/job/111188579169) | Complete C++ worker build with warnings treated as errors and CTest | Passed |
+| [docker](https://github.com/gragi-1/strata-compute-engine/actions/runs/37118048929/job/111188579412) | Compose build, live execution, dataset/workflow/campaign probes, verified TLS with independent daemons, RPC outage and worker failure recovery | Passed |
+
+This result validates the cited implementation commit. Later commits and release tags trigger their own runs and must be checked before publication; follow [the publication procedure](publication.md).
 
 ## Reproduce
 
@@ -74,7 +86,7 @@ uv run python scripts/partition_probe.py
 
 The network probe assumes the standard local `strata` Compose project, its development PostgreSQL credentials and local image tags. It requires developer dependencies, privileged test-container support and enough temporary storage. It is not intended to run against a production deployment. On sandboxed Windows, choose a writable pytest `--basetemp` and `cache_dir`. Each PostgreSQL test creates/drops its own schema; maintenance tests additionally need PostgreSQL client tools on PATH or the supported Windows installation path.
 
-The updated CI workflow contains the new live platform and TLS/independent-daemon probes. Uploaded network evidence includes JSON/logs only; generated private keys are excluded. Its Ubuntu 24.04 job installs PostgreSQL 17 client tools explicitly, matching the test server for dump/restore operations. Record a successful GitHub run's URL and commit separately once the pushed workflow completes; follow [the publication procedure](publication.md).
+The updated CI workflow contains the new live platform and TLS/independent-daemon probes. Uploaded network evidence includes JSON/logs only; generated private keys are excluded. Its Ubuntu 24.04 job installs PostgreSQL 17 client tools explicitly, matching the test server for dump/restore operations. The successful run and tested commit are recorded in the GitHub Actions section above.
 
 ## Boundaries
 
