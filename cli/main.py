@@ -13,10 +13,14 @@ app = typer.Typer(help="Submit, inspect and control Strata compute jobs.", no_ar
 
 def request(method: str, path: str, **kwargs: Any) -> httpx.Response:
     try:
+        headers = dict(kwargs.pop("headers", {}))
+        if os.getenv("STRATA_API_KEY"):
+            headers["Authorization"] = f"Bearer {os.environ['STRATA_API_KEY']}"
         response = httpx.request(
             method,
             os.getenv("STRATA_API_URL", "http://localhost:8000") + path,
             timeout=10,
+            headers=headers,
             **kwargs,
         )
         response.raise_for_status()
@@ -97,13 +101,19 @@ def events(job_id: str) -> None:
 
 @app.command()
 def artifacts(job_id: str, output: Path | None = None) -> None:
-    rows = request("GET", f"/jobs/{job_id}/artifacts").json()
     if output:
-        output.mkdir(parents=True, exist_ok=True)
-        for row in rows:
-            (output / row["name"]).write_bytes(request("GET", row["uri"]).content)
+        from strata_sdk import Client
+
+        with Client() as client:
+            rows = client.artifacts(job_id, output)
+    else:
+        rows = request("GET", f"/jobs/{job_id}/artifacts").json()
     display(rows)
 
+
+from cli.platform import install  # noqa: E402
+
+install(app)
 
 if __name__ == "__main__":
     app()

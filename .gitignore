@@ -9,6 +9,8 @@ __pycache__/
 coverage.xml
 htmlcov/
 .env
+.secrets/
+backups/
 *.db
 build/
 data/

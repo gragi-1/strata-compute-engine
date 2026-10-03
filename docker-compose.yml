@@ -1,8 +1,9 @@
 name: strata
 x-settings: &settings
-  STRATA_DATABASE_URL: postgresql+psycopg://strata:strata@postgres:5432/strata
+  STRATA_DATABASE_URL: postgresql+psycopg://strata:${STRATA_DATABASE_PASSWORD:-strata}@postgres:5432/strata
   STRATA_WORKER_TOKEN: ${STRATA_WORKER_TOKEN:-local-development-token}
-  STRATA_ALLOWED_IMAGES: '["strata/python-workloads:local","strata/wave-solver:local"]'
+  STRATA_API_KEYS: ${STRATA_API_KEYS:-{}}
+  STRATA_ALLOWED_IMAGES: '${STRATA_ALLOWED_IMAGES:-["strata/python-workloads:local","strata/wave-solver:local"]}'
   STRATA_ARTIFACT_ROOT: /app/data/artifacts
   OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
 x-app: &app
@@ -15,7 +16,7 @@ x-app: &app
 services:
   postgres:
     image: postgres:17-bookworm
-    environment: {POSTGRES_DB: strata, POSTGRES_USER: strata, POSTGRES_PASSWORD: strata}
+    environment: {POSTGRES_DB: strata, POSTGRES_USER: strata, POSTGRES_PASSWORD: '${STRATA_DATABASE_PASSWORD:-strata}'}
     ports: ["127.0.0.1:${STRATA_POSTGRES_PORT:-55433}:5432"]
     volumes: ["postgres-data:/var/lib/postgresql/data"]
     healthcheck:
@@ -57,6 +58,7 @@ services:
       STRATA_WORKER_ID: worker-1
       STRATA_WORKER_CPU: '2'
       STRATA_WORKER_MEMORY_MB: '1024'
+      STRATA_ALLOWED_IMAGES: '${STRATA_ALLOWED_IMAGES:-["strata/python-workloads:local","strata/wave-solver:local"]}'
     volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
   worker-2:
     <<: *app

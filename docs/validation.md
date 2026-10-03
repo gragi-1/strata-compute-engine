@@ -1,4 +1,6 @@
-# Validation evidence
+# v1 validation evidence
+
+This page records the original v1 verification and published CI evidence. The workspace expansion has its own [v2 validation](validation-v2.md); new local checks do not change the scope of the historical CI runs below.
 
 Actual local verification on **2026-10-02**. The Compose deployment uses Linux containers on Docker Desktop; Python checks ran on Windows 11 / Python 3.13.5, and the complete C++ worker built under Ubuntu WSL with GCC 11.4.
 

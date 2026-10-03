@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import Any
 
 import grpc
@@ -10,8 +11,16 @@ from control_plane.rpc import engine_pb2_grpc as rpc
 
 class Transport:
     def __init__(self, target: str, token: str) -> None:
-        self.channel = grpc.insecure_channel(
-            target, options=[("grpc.max_send_message_length", 17 * 1024 * 1024)]
+        options = [("grpc.max_send_message_length", 17 * 1024 * 1024)]
+        ca = os.getenv("STRATA_RPC_CA")
+        self.channel = (
+            grpc.secure_channel(
+                target,
+                grpc.ssl_channel_credentials(root_certificates=Path(ca).read_bytes()),
+                options=options,
+            )
+            if ca
+            else grpc.insecure_channel(target, options=options)
         )
         self.stub = rpc.WorkerControlStub(self.channel)
         self.token = token

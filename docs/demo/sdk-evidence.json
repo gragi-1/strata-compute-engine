@@ -1,0 +1,41 @@
+{
+  "job_id": "7dc61489-2e55-4874-bdb0-2ea91f25c531",
+  "status": "SUCCEEDED",
+  "artifacts": [
+    {
+      "id": "1bec7819-f0b3-4784-a3cd-b00f335a5660",
+      "job_id": "7dc61489-2e55-4874-bdb0-2ea91f25c531",
+      "attempt_id": "1d7e2dec-9a3d-40cf-995f-eaed45433e4c",
+      "name": "result.json",
+      "sha256": "1202e1fb8ab9852a23dd4631895fd8a6764a728fbeee633c58285c3f6b804fc0",
+      "size": 356,
+      "content_type": "application/json",
+      "created_at": "2026-10-03T09:43:24.067399Z",
+      "uri": "/artifacts/1bec7819-f0b3-4784-a3cd-b00f335a5660"
+    }
+  ],
+  "result": {
+    "rows": 3,
+    "columns": [
+      "x",
+      "y"
+    ],
+    "statistics": {
+      "x": {
+        "count": 3,
+        "mean": 3.0,
+        "min": 1.0,
+        "max": 5.0,
+        "sample_variance": 4.0
+      },
+      "y": {
+        "count": 3,
+        "mean": 4.0,
+        "min": 2.0,
+        "max": 6.0,
+        "sample_variance": 4.0
+      }
+    },
+    "duration_seconds": 0.1583888749992184
+  }
+}

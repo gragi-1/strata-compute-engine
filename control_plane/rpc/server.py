@@ -1,7 +1,7 @@
 import logging
 import os
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar
 
@@ -148,6 +148,39 @@ class WorkerControl(rpc.WorkerControlServicer):  # type: ignore[misc]
 
         return self.invoke(context, "PutArtifact", action)
 
+    def InputManifest(self, request: Any, context: Any) -> Any:
+        from control_plane.inputs import manifest
+
+        return self.invoke(
+            context,
+            "InputManifest",
+            lambda: pb.InputManifestReply(
+                files=[pb.InputFile(**f) for f in manifest(self.svc, request)]
+            ),
+        )
+
+    def ReadInput(self, request: Any, context: Any) -> Iterator[Any]:
+        from control_plane.inputs import input_path
+
+        # Short bounded range streams leave leases renewable between transfers.
+        def action() -> tuple[Any, int]:
+            if request.offset < 0 or not 1 <= request.max_bytes <= 4 * 1024 * 1024:
+                raise DomainError(422, "invalid input byte range")
+            return input_path(self.svc, request.credentials, request.sha256)
+
+        path, size = self.invoke(context, "ReadInput", action)
+        if request.offset > size:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "offset exceeds file size")
+        remaining = min(request.max_bytes, size - request.offset)
+        with path.open("rb") as stream:
+            stream.seek(request.offset)
+            while remaining and context.is_active():
+                chunk = stream.read(min(65536, remaining))
+                if not chunk:
+                    context.abort(grpc.StatusCode.DATA_LOSS, "input file is truncated")
+                remaining -= len(chunk)
+                yield pb.InputChunk(content=chunk)
+
 
 def make_server(service: EngineService, address: str = "[::]:50051") -> Any:
     server = grpc.server(
@@ -156,7 +189,18 @@ def make_server(service: EngineService, address: str = "[::]:50051") -> Any:
         options=[("grpc.max_receive_message_length", service.settings.artifact_max_bytes + 65536)],
     )
     rpc.add_WorkerControlServicer_to_server(WorkerControl(service), server)
-    if server.add_insecure_port(address) == 0:
+    config = service.settings
+    bound = (
+        server.add_secure_port(
+            address,
+            grpc.ssl_server_credentials(
+                [(config.tls_key.read_bytes(), config.tls_cert.read_bytes())]
+            ),
+        )
+        if config.tls_cert and config.tls_key
+        else server.add_insecure_port(address)
+    )
+    if bound == 0:
         raise RuntimeError(f"cannot bind RPC server: {address}")
     return server
 

@@ -2,6 +2,8 @@
 
 Use Python 3.12+, uv and PostgreSQL 17. Run `uv sync --locked`. All production services use PostgreSQL; SQLite is supported only for single-process unit/protocol tests.
 
+Use `uv sync --locked --extra analysis` for scientific report exports. The browser workspace is served by FastAPI from `control_plane/web`; no separate frontend build server is required. Check JavaScript with `node --check control_plane/web/app.js`. Read [the workspace guide](platform.md) for campaigns, datasets, workflows and SDK usage, and [deployment](deployment.md) for API roles and verified RPC TLS.
+
 Configuration comes from `STRATA_*` environment variables. `.env.example` is for Compose or explicit export; services do not implicitly load a local dotenv file. The allowlist is a JSON list, for example `STRATA_ALLOWED_IMAGES='["strata/python-workloads:local","strata/wave-solver:local"]'`. All workload images must provide a world-writable `/output` directory for their non-root user. The supplied Dockerfiles set its mode to 1777. Agents create a separate output volume per attempt and remove it after successful reporting or fencing.
 
 Start independent services:

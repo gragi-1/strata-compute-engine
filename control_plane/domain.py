@@ -20,8 +20,8 @@ ACTIVE = {JobStatus.SCHEDULED, JobStatus.RUNNING, JobStatus.CANCEL_REQUESTED}
 WAITING = {JobStatus.QUEUED, JobStatus.RETRYING}
 TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
     JobStatus.PENDING: {JobStatus.QUEUED},
-    JobStatus.QUEUED: {JobStatus.SCHEDULED, JobStatus.CANCELLED},
-    JobStatus.RETRYING: {JobStatus.SCHEDULED, JobStatus.CANCELLED},
+    JobStatus.QUEUED: {JobStatus.SCHEDULED, JobStatus.CANCELLED, JobStatus.FAILED},
+    JobStatus.RETRYING: {JobStatus.SCHEDULED, JobStatus.CANCELLED, JobStatus.FAILED},
     JobStatus.SCHEDULED: {
         JobStatus.RUNNING,
         JobStatus.RETRYING,

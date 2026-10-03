@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Strata · Compute Workspace</title>
+    <link rel="stylesheet" href="/app/style.css" />
+    <script src="/app/app.js" defer></script>
+  </head>
+  <body>
+    <aside>
+      <a class="brand" href="/">▧ <span>STRATA</span></a>
+      <p class="caption">COMPUTE WORKSPACE</p>
+      <nav aria-label="Main navigation">
+        <button data-page="overview">Overview</button
+        ><button data-page="campaigns">Campaigns</button
+        ><button data-page="jobs">Jobs</button
+        ><button data-page="datasets">Datasets</button
+        ><button data-page="workers">Workers</button>
+      </nav>
+      <footer>
+        <span id="connection">Connecting…</span
+        ><a href="/docs" target="_blank" rel="noopener">API reference ↗</a
+        ><button id="access">Change access key</button>
+      </footer>
+    </aside>
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">DISTRIBUTED COMPUTE ENGINE</p>
+          <h1 id="title">Overview</h1>
+          <p id="subtitle">
+            Run work. Keep the evidence. Repeat with confidence.
+          </p>
+        </div>
+        <button id="refresh">Refresh</button>
+      </header>
+      <div id="notice" role="status" hidden></div>
+      <section id="content" aria-live="polite"></section>
+    </main>
+    <dialog id="modal">
+      <form id="editor">
+        <div class="dialog-head">
+          <h2 id="dialog-title">New job</h2>
+          <button type="button" id="close" aria-label="Close dialog">×</button>
+        </div>
+        <p id="dialog-help"></p>
+        <div id="fields"></div>
+        <p id="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" id="cancel-dialog">Cancel</button
+          ><button class="primary" type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="login">
+      <form id="login-form">
+        <h2>Connect to your workspace</h2>
+        <p>
+          Enter an API key supplied by your administrator. Local development
+          mode also allows an empty key.
+        </p>
+        <label
+          >API key<input id="key" type="password" autocomplete="off"
+        /></label>
+        <p id="login-error" role="alert"></p>
+        <button class="primary" type="submit">Connect</button>
+      </form>
+    </dialog>
+  </body>
+</html>

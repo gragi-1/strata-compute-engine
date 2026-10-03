@@ -27,6 +27,18 @@ class JobSubmit(StrictModel):
     priority: int = Field(default=0, ge=0, le=100)
     max_retries: int = Field(default=3, ge=0, le=20)
     timeout_seconds: int = Field(default=600, ge=1, le=86400)
+    inputs: list["DatasetInput"] = Field(default_factory=list, max_length=16)
+    depends_on: list[str] = Field(default_factory=list, max_length=100)
+    artifact_inputs: list["ArtifactInput"] = Field(default_factory=list, max_length=16)
+
+    @model_validator(mode="after")
+    def unique_inputs(self) -> "JobSubmit":
+        aliases = [item.alias for item in self.inputs] + [
+            item.alias for item in self.artifact_inputs
+        ]
+        if len(set(aliases)) != len(aliases):
+            raise ValueError("input aliases must be unique")
+        return self
 
 
 class JobView(BaseModel):
@@ -47,6 +59,54 @@ class JobView(BaseModel):
     scheduled_at: datetime | None
     started_at: datetime | None
     finished_at: datetime | None
+    campaign_id: str | None
+    parameters: dict[str, str | int | float | bool]
+    inputs: list[dict[str, str]]
+    depends_on: list[str]
+
+
+class DatasetInput(StrictModel):
+    version_id: str = Field(min_length=1, max_length=36)
+    alias: str = Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{0,31}$")
+
+
+class ArtifactInput(StrictModel):
+    job_id: str = Field(min_length=1, max_length=128)
+    name: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$")
+    alias: str = Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{0,31}$")
+
+
+class NamedResource(StrictModel):
+    name: str = Field(min_length=1, max_length=128)
+    description: str = Field(default="", max_length=4096)
+
+
+class VersionCreate(StrictModel):
+    label: str = Field(min_length=1, max_length=128)
+
+
+class CampaignSubmit(NamedResource):
+    template: JobSubmit
+    matrix: dict[str, list[str | int | float | bool]] = Field(default_factory=dict, max_length=16)
+    repeats: int = Field(default=1, ge=1, le=1000)
+
+    @model_validator(mode="after")
+    def valid_matrix(self) -> "CampaignSubmit":
+        import math
+        import re
+
+        for key, values in self.matrix.items():
+            if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_]{0,31}", key) or key == "repeat":
+                raise ValueError("invalid or reserved matrix parameter")
+            if not values or len(values) > 1000:
+                raise ValueError("matrix dimensions need 1..1000 values")
+            if any(isinstance(v, float) and not math.isfinite(v) for v in values):
+                raise ValueError("matrix values must be finite")
+        return self
+
+
+class WorkflowSubmit(NamedResource):
+    nodes: dict[str, JobSubmit] = Field(min_length=1, max_length=1000)
 
 
 class WorkerRegister(StrictModel):

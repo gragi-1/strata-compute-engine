@@ -18,7 +18,7 @@ def register(service, worker_id="worker-1", cpu=4, memory=4096, capabilities=Non
             worker_id=worker_id,
             cpu_total=cpu,
             memory_total_mb=memory,
-            capabilities=capabilities or ["python", "cpp"],
+            capabilities=capabilities or ["python", "cpp", "dataset-inputs"],
         )
     )
 

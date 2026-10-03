@@ -1,0 +1,18 @@
+name: strata-worker
+services:
+  worker:
+    image: ${STRATA_WORKER_IMAGE:?Set the published Python or C++ worker image digest}
+    restart: unless-stopped
+    user: root
+    entrypoint: ["${STRATA_WORKER_COMMAND:-strata-worker}"]
+    environment:
+      STRATA_RPC_TARGET: ${STRATA_RPC_TARGET:?Set coordinator host and RPC port}
+      STRATA_WORKER_ID: ${STRATA_WORKER_ID:?Set a unique worker ID}
+      STRATA_WORKER_TOKEN: ${STRATA_WORKER_TOKEN:?Set the private worker token}
+      STRATA_ALLOWED_IMAGES: ${STRATA_ALLOWED_IMAGES:?Set the JSON image allowlist}
+      STRATA_WORKER_CPU: ${STRATA_WORKER_CPU:-2}
+      STRATA_WORKER_MEMORY_MB: ${STRATA_WORKER_MEMORY_MB:-1024}
+      STRATA_RPC_CA: /run/strata/ca.pem
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${STRATA_RPC_CA_FILE:?Set a trusted CA certificate path}:/run/strata/ca.pem:ro

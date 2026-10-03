@@ -1,9 +1,10 @@
 from datetime import timedelta
 
 from sqlalchemy import select
+from sqlalchemy.orm import aliased
 
 from control_plane.domain import ACTIVE, WAITING, JobStatus, fits
-from control_plane.models import Attempt, Job, Worker, identifier
+from control_plane.models import Attempt, Job, JobDependency, Worker, identifier
 from control_plane.services import EngineService
 
 
@@ -18,7 +19,7 @@ class Scheduler:
             workers = session.scalars(
                 select(Worker)
                 .where(
-                    Worker.status == "HEALTHY",
+                    Worker.status.in_(["HEALTHY", "DRAINING"]),
                     Worker.last_heartbeat <= now - timedelta(seconds=svc.settings.worker_timeout),
                 )
                 .with_for_update(skip_locked=True)
@@ -86,7 +87,32 @@ class Scheduler:
         assigned = 0
         with svc.factory.begin() as session:
             now = svc.now(session)
-            query = select(Job).where(Job.status.in_(WAITING), Job.eligible_at <= now)
+            parent = aliased(Job)
+            failed = (
+                select(JobDependency.job_id)
+                .join(parent, parent.id == JobDependency.parent_id)
+                .where(
+                    parent.status.in_([JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.TIMED_OUT])
+                )
+            )
+            blocked = (
+                select(JobDependency.job_id)
+                .join(parent, parent.id == JobDependency.parent_id)
+                .where(parent.status != JobStatus.SUCCEEDED)
+            )
+            for job in session.scalars(
+                select(Job)
+                .where(Job.status.in_(WAITING), Job.id.in_(failed))
+                .limit(svc.settings.scheduler_batch_size)
+                .with_for_update(skip_locked=True)
+            ):
+                job.finished_at = now
+                svc.transition(
+                    session, job, JobStatus.FAILED, now, reason="dependency did not succeed"
+                )
+            query = select(Job).where(
+                Job.status.in_(WAITING), Job.eligible_at <= now, Job.id.not_in(blocked)
+            )
             if svc.settings.scheduling_policy != "fifo":
                 query = query.order_by(Job.priority.desc())
             jobs = list(
@@ -98,19 +124,19 @@ class Scheduler:
                     .with_for_update(skip_locked=True)
                 )
             )
-            for job in jobs:
-                workers = list(
-                    session.scalars(
-                        select(Worker)
-                        .where(
-                            Worker.status == "HEALTHY",
-                            Worker.last_heartbeat
-                            > now - timedelta(seconds=svc.settings.worker_timeout),
-                        )
-                        .order_by(Worker.id)
-                        .with_for_update(skip_locked=True)
+            workers = list(
+                session.scalars(
+                    select(Worker)
+                    .where(
+                        Worker.status == "HEALTHY",
+                        Worker.last_heartbeat
+                        > now - timedelta(seconds=svc.settings.worker_timeout),
                     )
+                    .order_by(Worker.id)
+                    .with_for_update(skip_locked=True)
                 )
+            )
+            for job in jobs:
                 eligible = [
                     w
                     for w in workers

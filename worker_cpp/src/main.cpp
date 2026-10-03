@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <openssl/evp.h>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -58,6 +59,7 @@ struct Running {
     std::mutex mutex;
     bool fenced = false;
     bool terminating = false;
+    bool executing = false;
     std::optional<pb::Outcome> outcome;
     int exit_code = 1;
     std::string reason;
@@ -85,13 +87,15 @@ class Agent {
             while (!stop.stop_requested()) {
                 for (const auto &r : snapshot()) {
                     bool terminate = false;
+                    bool executing = false;
                     {
                         std::lock_guard lock(r->mutex);
+                        executing = r->executing;
                         if (!r->fenced && r->lease.expired()) {
                             r->fenced = true;
                             terminate = true;
                         }
-                        if (!r->fenced && !r->outcome &&
+                        if (!r->fenced && !r->outcome && r->executing &&
                             Clock::now() - r->started >=
                                 std::chrono::seconds(r->assignment.timeout_seconds())) {
                             r->outcome = pb::TIMED_OUT;
@@ -101,7 +105,7 @@ class Agent {
                             terminate = true;
                         }
                     }
-                    if (terminate) {
+                    if (terminate && executing) {
                         try {
                             docker.stop(r->container, grace);
                         } catch (const std::exception &e) {
@@ -152,8 +156,17 @@ class Agent {
     static std::shared_ptr<grpc::Channel> channel() {
         grpc::ChannelArguments args;
         args.SetMaxSendMessageSize(17 * 1024 * 1024);
-        return grpc::CreateCustomChannel(env("STRATA_RPC_TARGET", "rpc:50051"),
-                                         grpc::InsecureChannelCredentials(), args);
+        auto credentials = grpc::InsecureChannelCredentials();
+        const auto ca = env("STRATA_RPC_CA", "");
+        if (!ca.empty()) {
+            std::ifstream file(ca);
+            if (!file)
+                throw std::runtime_error("cannot read RPC CA");
+            grpc::SslCredentialsOptions tls;
+            tls.pem_root_certs = std::string(std::istreambuf_iterator<char>(file), {});
+            credentials = grpc::SslCredentials(tls);
+        }
+        return grpc::CreateCustomChannel(env("STRATA_RPC_TARGET", "rpc:50051"), credentials, args);
     }
 
     std::vector<std::shared_ptr<Running>> snapshot() {
@@ -192,6 +205,7 @@ class Agent {
         request.set_memory_total_mb(memory);
         request.add_capabilities("python");
         request.add_capabilities("cpp");
+        request.add_capabilities("dataset-inputs");
         request.add_capabilities("worker-cpp");
         request.add_capabilities("node:" + worker_id);
         const auto reply = call<pb::RegisterReply>(&pb::WorkerControl::Stub::Register, request);
@@ -242,6 +256,7 @@ class Agent {
                 }
                 r = it->second;
             }
+            bool should_stop = false;
             {
                 std::lock_guard lock(r->mutex);
                 if (command.valid() && !r->fenced)
@@ -252,9 +267,10 @@ class Agent {
                     r->outcome = pb::CANCELLED;
                     r->exit_code = 137;
                     r->reason = "cancellation requested";
+                    should_stop = r->executing;
                 }
             }
-            if (command.cancel())
+            if (should_stop)
                 docker.stop(r->container, grace);
         }
         next_heartbeat = before + std::chrono::duration_cast<Clock::duration>(
@@ -274,7 +290,7 @@ class Agent {
         std::string id;
         try {
             id = docker.create(a.attempt_id(), worker_id, a.image(), command, a.cpu(),
-                               a.memory_mb());
+                               a.memory_mb(), a.has_inputs());
         } catch (const std::exception &e) {
             launch_failed(a, "container create failed");
             log("container_create_failed", e.what());
@@ -286,12 +302,15 @@ class Agent {
             running.emplace(a.attempt_id(), r);
         }
         try {
+            if (a.has_inputs())
+                prepare_inputs(r);
             call<pb::Empty>(&pb::WorkerControl::Stub::Start, credentials(*r), a.traceparent());
             std::lock_guard lock(r->mutex);
             if (r->fenced || r->outcome || r->lease.expired())
                 throw std::runtime_error("deadline before start");
-            docker.request("POST", "/containers/" + id + "/start");
             r->started = Clock::now();
+            r->executing = true;
+            docker.request("POST", "/containers/" + id + "/start");
         } catch (...) {
             {
                 std::lock_guard lock(r->mutex);
@@ -302,6 +321,67 @@ class Agent {
         }
         log("job_started", "",
             {{"job_id", a.job_id()}, {"attempt_id", a.attempt_id()}, {"worker_id", worker_id}});
+    }
+    void prepare_inputs(const std::shared_ptr<Running> &r) {
+        const auto manifest =
+            call<pb::InputManifestReply>(&pb::WorkerControl::Stub::InputManifest, credentials(*r));
+        auto progress = [this, &r]() {
+            {
+                std::lock_guard lock(r->mutex);
+                if (r->fenced || r->outcome || r->lease.expired())
+                    throw std::runtime_error("input staging lost its lease");
+            }
+            if (Clock::now() >= next_heartbeat)
+                heartbeat();
+        };
+        for (const auto &file : manifest.files()) {
+            std::unique_ptr<FILE, decltype(&std::fclose)> stream(std::tmpfile(), std::fclose);
+            if (!stream)
+                throw std::runtime_error("cannot create input buffer");
+            std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> digest(EVP_MD_CTX_new(),
+                                                                           EVP_MD_CTX_free);
+            EVP_DigestInit_ex(digest.get(), EVP_sha256(), nullptr);
+            long offset = 0;
+            while (offset < file.size()) {
+                progress();
+                pb::ReadInputRequest request;
+                *request.mutable_credentials() = credentials(*r);
+                request.set_sha256(file.sha256());
+                request.set_offset(offset);
+                request.set_max_bytes(
+                    static_cast<int>(std::min<long>(4 * 1024 * 1024, file.size() - offset)));
+                grpc::ClientContext context;
+                context.AddMetadata("authorization", "Bearer " + token);
+                context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+                auto reader = stub->ReadInput(&context, request);
+                pb::InputChunk chunk;
+                long count = 0;
+                while (reader->Read(&chunk)) {
+                    if (std::fwrite(chunk.content().data(), 1, chunk.content().size(),
+                                    stream.get()) != chunk.content().size())
+                        throw std::runtime_error("cannot write input buffer");
+                    EVP_DigestUpdate(digest.get(), chunk.content().data(), chunk.content().size());
+                    count += chunk.content().size();
+                }
+                const auto status = reader->Finish();
+                if (!status.ok())
+                    throw RPCError(status);
+                if (!count || offset + count > file.size())
+                    throw std::runtime_error("input size mismatch");
+                offset += count;
+            }
+            unsigned char hash[EVP_MAX_MD_SIZE];
+            unsigned int length = 0;
+            EVP_DigestFinal_ex(digest.get(), hash, &length);
+            std::ostringstream hex;
+            for (unsigned int i = 0; i < length; ++i)
+                hex << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
+            if (hex.str() != file.sha256())
+                throw std::runtime_error("input SHA-256 mismatch");
+            progress();
+            docker.stage(r->assignment.attempt_id(), worker_id, r->assignment.image(), file.alias(),
+                         file.name(), stream.get(), file.size(), progress);
+        }
     }
     void launch_failed(const pb::Assignment &a, const std::string &reason) {
         pb::CompleteRequest failure;

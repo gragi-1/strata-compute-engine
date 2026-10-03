@@ -1,16 +1,16 @@
 {
   "kind": "live RPC reply blackhole",
-  "elapsed_seconds": 40.437622599998576,
+  "elapsed_seconds": 40.42525139999634,
   "watchdogs": [
     {
-      "job_id": "d5b07745-e6b5-4e62-816a-51259b33f598",
+      "job_id": "ddf24379-f1b9-407e-95f4-6dc4e89a6ed0",
       "worker_id": "worker-1",
       "container_running": false,
       "container_state": "exited",
       "job_status": "RETRYING"
     },
     {
-      "job_id": "a714fc75-c2e3-4804-8e79-b5e2b636f130",
+      "job_id": "fb9f6d98-d96b-47df-b8c3-d93e7d6f422a",
       "worker_id": "worker-cpp",
       "container_running": false,
       "container_state": "exited",

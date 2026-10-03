@@ -1,0 +1,70 @@
+{
+  "campaign": {
+    "id": "3c97e297-e564-4446-941b-63e8a9e61bda",
+    "name": "Monte Carlo reproducibility study",
+    "description": "",
+    "created_at": "2026-10-03T00:44:47.544115Z",
+    "specification": {
+      "name": "Monte Carlo reproducibility study",
+      "description": "",
+      "template": {
+        "name": "Estimate pi",
+        "image": "strata/python-workloads:local",
+        "command": [
+          "python",
+          "/app/main.py",
+          "monte-carlo",
+          "--samples",
+          "${samples}",
+          "--seed",
+          "${seed}"
+        ],
+        "resources": {
+          "cpu": 0.5,
+          "memory_mb": 128
+        },
+        "capabilities": [],
+        "priority": 0,
+        "max_retries": 2,
+        "timeout_seconds": 600,
+        "inputs": [],
+        "depends_on": [],
+        "artifact_inputs": []
+      },
+      "matrix": {
+        "samples": [
+          10000,
+          100000
+        ],
+        "seed": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ]
+      },
+      "repeats": 2
+    },
+    "counts": {
+      "SUCCEEDED": 48
+    },
+    "total": 48,
+    "completed": 48,
+    "progress": 1.0,
+    "status": "COMPLETED"
+  },
+  "python": "3.13.5",
+  "strata": "2.0.0",
+  "x": "seed",
+  "y": "result.pi",
+  "group": "samples",
+  "matplotlib": "3.11.2"
+}

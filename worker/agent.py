@@ -1,7 +1,9 @@
+import hashlib
 import logging
 import mimetypes
 import os
 import signal
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -30,6 +32,7 @@ class Running:
     result: Result | None = None
     fenced: bool = False
     terminating: bool = False
+    executing: bool = True
     lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
 
@@ -62,7 +65,13 @@ class Agent:
                 worker_id=self.worker_id,
                 cpu_total=self.cpu,
                 memory_total_mb=self.memory,
-                capabilities=["python", "cpp", "worker-python", f"node:{self.worker_id}"],
+                capabilities=[
+                    "python",
+                    "cpp",
+                    "dataset-inputs",
+                    "worker-python",
+                    f"node:{self.worker_id}",
+                ],
             ),
         )
         # A rejected duplicate ID must never stop the live owner's containers.
@@ -101,7 +110,8 @@ class Agent:
             else:
                 running.fenced = True
             if command.cancel:
-                self.executor.stop(running.container)
+                if running.executing:
+                    self.executor.stop(running.container)
                 running.result = Result("CANCELLED", 137, "cancellation requested")
         self.next_heartbeat = before + self.heartbeat_interval
 
@@ -119,10 +129,14 @@ class Agent:
             self.launch_failed(assignment, "container create failed")
             logger.exception("container_create_failed", extra={"job_id": assignment.job_id})
             return
-        running = Running(assignment, container, before, before + assignment.lease_seconds)
+        running = Running(
+            assignment, container, before, before + assignment.lease_seconds, executing=False
+        )
         with self.lock:
             self.running[assignment.attempt_id] = running
         try:
+            if assignment.has_inputs:
+                self.prepare_inputs(running)
             self.transport.call("Start", self.transport.credentials(assignment))
             with running.lock:
                 if (
@@ -132,8 +146,9 @@ class Agent:
                     or running.result is not None
                 ):
                     raise RuntimeError("lease or execution deadline expired before container start")
-                container.start()
                 running.started = time.monotonic()
+                running.executing = True
+                container.start()
         except Exception:
             running.fenced = True
             self.launch_failed(assignment, "container launch failed or acknowledgement lost")
@@ -147,6 +162,45 @@ class Agent:
                 "attempt_id": assignment.attempt_id,
             },
         )
+
+    def prepare_inputs(self, running: Running) -> None:
+        assignment = running.assignment
+        credentials = self.transport.credentials(assignment)
+        reply = self.transport.call("InputManifest", credentials)
+
+        def progress() -> None:
+            if running.fenced or time.monotonic() >= running.lease_deadline or running.result:
+                raise RuntimeError("input staging lost its lease")
+            if time.monotonic() >= self.next_heartbeat:
+                self.heartbeat()
+
+        for file in reply.files:
+            with tempfile.TemporaryFile() as stream:
+                digest, offset = hashlib.sha256(), 0
+                while offset < file.size:
+                    progress()
+                    count = 0
+                    for chunk in self.transport.call(
+                        "ReadInput",
+                        pb.ReadInputRequest(
+                            credentials=credentials,
+                            sha256=file.sha256,
+                            offset=offset,
+                            max_bytes=min(4 * 1024 * 1024, file.size - offset),
+                        ),
+                    ):
+                        stream.write(chunk.content)
+                        digest.update(chunk.content)
+                        count += len(chunk.content)
+                    if not count or offset + count > file.size:
+                        raise ValueError("input size mismatch")
+                    offset += count
+                if digest.hexdigest() != file.sha256:
+                    raise ValueError("input SHA-256 mismatch")
+                progress()
+                self.executor.stage(
+                    assignment, self.worker_id, file.alias, file.name, stream, file.size, progress
+                )
 
     def launch_failed(self, assignment: Any, reason: str) -> None:
         try:
@@ -214,13 +268,14 @@ class Agent:
                     terminate = True
                 if (
                     running.result is None
+                    and running.executing
                     and not running.fenced
                     and not running.terminating
                     and time.monotonic() - running.started >= running.assignment.timeout_seconds
                 ):
                     running.terminating = True
                     terminate = timed_out = True
-            if terminate:
+            if terminate and running.executing:
                 try:
                     self.executor.stop(running.container)
                 except Exception:

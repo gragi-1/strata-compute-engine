@@ -1,0 +1,36 @@
+x-secure: &secure
+  STRATA_API_KEYS: ${STRATA_API_KEYS:?Set API keys with viewer/operator/admin roles}
+  STRATA_WORKER_TOKEN: ${STRATA_WORKER_TOKEN:?Set a strong worker token}
+  STRATA_PRODUCTION: 'true'
+  STRATA_TLS_CERT: /run/strata/rpc.pem
+  STRATA_TLS_KEY: /run/strata/rpc-key.pem
+services:
+  api:
+    environment: *secure
+  migrate:
+    environment: *secure
+  scheduler:
+    environment: *secure
+  rpc:
+    environment: *secure
+    ports:
+      - ${STRATA_RPC_LISTEN_IP:?Set the coordinator private network IP}:50052:50051
+    volumes:
+      - ${STRATA_TLS_CERT_FILE:?Set a PEM certificate path}:/run/strata/rpc.pem:ro
+      - ${STRATA_TLS_KEY_FILE:?Set a PEM private key path}:/run/strata/rpc-key.pem:ro
+  worker-1:
+    environment:
+      STRATA_RPC_CA: /run/strata/ca.pem
+    volumes:
+      - ${STRATA_RPC_CA_FILE:?Set the trusted CA certificate path}:/run/strata/ca.pem:ro
+  worker-2:
+    environment:
+      STRATA_RPC_CA: /run/strata/ca.pem
+    volumes:
+      - ${STRATA_RPC_CA_FILE:?Set the trusted CA certificate path}:/run/strata/ca.pem:ro
+  worker-cpp:
+    environment:
+      STRATA_RPC_CA: /run/strata/ca.pem
+      STRATA_ALLOWED_IMAGES: ${STRATA_ALLOWED_IMAGES:?Set the workload image allowlist}
+    volumes:
+      - ${STRATA_RPC_CA_FILE:?Set the trusted CA certificate path}:/run/strata/ca.pem:ro

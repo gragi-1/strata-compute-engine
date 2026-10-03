@@ -1,6 +1,8 @@
 import io
+import tarfile
+import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
@@ -27,6 +29,12 @@ class DockerExecutor:
         self.client.volumes.create(
             name=f"strata-output-{assignment.attempt_id}", labels={"strata.worker": worker_id}
         )
+        volumes = {f"strata-output-{assignment.attempt_id}": {"bind": "/output", "mode": "rw"}}
+        if assignment.has_inputs:
+            self.client.volumes.create(
+                name=f"strata-input-{assignment.attempt_id}", labels={"strata.worker": worker_id}
+            )
+            volumes[f"strata-input-{assignment.attempt_id}"] = {"bind": "/inputs", "mode": "ro"}
         return self.client.containers.create(
             assignment.image,
             list(assignment.command),
@@ -43,12 +51,64 @@ class DockerExecutor:
             pids_limit=128,
             init=True,
             tmpfs={"/tmp": "rw,nosuid,nodev,size=64m"},
-            volumes={f"strata-output-{assignment.attempt_id}": {"bind": "/output", "mode": "rw"}},
+            volumes=volumes,
             labels={"strata.worker": worker_id, "strata.attempt": assignment.attempt_id},
             log_config=docker.types.LogConfig(
                 type="json-file", config={"max-size": "1m", "max-file": "1"}
             ),
         )
+
+    def stage(
+        self,
+        assignment: Any,
+        worker_id: str,
+        alias: str,
+        name: str,
+        stream: Any,
+        size: int,
+        progress: Callable[[], None],
+    ) -> None:
+        helper = self.client.containers.create(
+            assignment.image,
+            ["true"],
+            network_disabled=True,
+            cap_drop=["ALL"],
+            security_opt=["no-new-privileges:true"],
+            user="65534:65534",
+            mem_limit="64m",
+            volumes={f"strata-input-{assignment.attempt_id}": {"bind": "/staging", "mode": "rw"}},
+            labels={"strata.worker": worker_id, "strata.attempt": assignment.attempt_id},
+        )
+        try:
+            with tempfile.TemporaryFile() as archive:
+                with tarfile.open(fileobj=archive, mode="w") as tar:
+                    directory = tarfile.TarInfo(alias)
+                    directory.type, directory.mode = tarfile.DIRTYPE, 0o755
+                    tar.addfile(directory)
+                    item = tarfile.TarInfo(f"{alias}/{name}")
+                    item.size, item.mode, item.uid, item.gid = size, 0o444, 65534, 65534
+                    stream.seek(0)
+                    tar.addfile(item, stream)
+                archive.seek(0)
+
+                class Pump:
+                    def read(self, length: int = -1) -> bytes:
+                        progress()
+                        return archive.read(length if length >= 0 else 65536)
+
+                    def __iter__(self) -> "Pump":
+                        return self
+
+                    def __next__(self) -> bytes:
+                        data = self.read(65536)
+                        if not data:
+                            raise StopIteration
+                        return data
+
+                # The helper is never started. Docker writes the verified archive into its volume.
+                self.client.api.put_archive(helper.id, "/staging", Pump())
+        finally:
+            helper.remove(force=True)
 
     def stop(self, container: Any) -> None:
         try:
@@ -108,6 +168,8 @@ class DockerExecutor:
         if attempt_id:
             with suppress(docker.errors.NotFound):
                 self.client.volumes.get(f"strata-output-{attempt_id}").remove(force=True)
+            with suppress(docker.errors.NotFound):
+                self.client.volumes.get(f"strata-input-{attempt_id}").remove(force=True)
 
     @staticmethod
     def monotonic() -> float:

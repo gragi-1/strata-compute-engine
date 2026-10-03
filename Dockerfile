@@ -1,11 +1,13 @@
 FROM python:3.12-slim
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
+RUN pip install --no-cache-dir uv==0.9.18 && uv sync --locked --no-dev --no-install-project
 COPY control_plane ./control_plane
 COPY scheduler ./scheduler
 COPY worker ./worker
 COPY cli ./cli
-RUN pip install --no-cache-dir uv==0.9.18 && uv sync --locked --no-dev
+COPY strata_sdk ./strata_sdk
+RUN uv sync --locked --no-dev
 COPY alembic.ini ./
 COPY migrations ./migrations
 COPY examples ./examples

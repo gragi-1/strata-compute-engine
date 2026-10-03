@@ -1,0 +1,15 @@
+name: Generate and summarize observations
+description: Transfer a successful upstream artifact into a downstream read-only input.
+nodes:
+  generate:
+    name: Generate observations
+    image: strata/python-workloads:local
+    command: [python, -c, "from pathlib import Path; Path('/output/observations.csv').write_text('x\\n1\\n2\\n3\\n')"]
+    resources: {cpu: 1, memory_mb: 128}
+  analyze:
+    name: Summarize observations
+    image: strata/python-workloads:local
+    artifact_inputs:
+      - {job_id: generate, name: observations.csv, alias: source}
+    command: [python, -c, "import csv,json; from pathlib import Path; total=sum(int(r['x']) for r in csv.DictReader(Path('/inputs/source/observations.csv').open())); Path('/output/result.json').write_text(json.dumps({'sum':total}))"]
+    resources: {cpu: 1, memory_mb: 128}

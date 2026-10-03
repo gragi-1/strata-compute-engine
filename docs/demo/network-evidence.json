@@ -1,0 +1,60 @@
+{
+  "environment": "one physical host, two independent Docker daemons",
+  "rpc": "TLS verified by both worker implementations",
+  "results": {
+    "python": {
+      "job_id": "031e5cb3-1777-46db-9e65-777357546afa",
+      "result": {
+        "rows": 3,
+        "columns": [
+          "x",
+          "y"
+        ],
+        "statistics": {
+          "x": {
+            "count": 3,
+            "mean": 3.0,
+            "min": 1.0,
+            "max": 5.0,
+            "sample_variance": 4.0
+          },
+          "y": {
+            "count": 3,
+            "mean": 4.0,
+            "min": 2.0,
+            "max": 6.0,
+            "sample_variance": 4.0
+          }
+        },
+        "duration_seconds": 0.07748046800000452
+      }
+    },
+    "cpp": {
+      "job_id": "64c78db4-b232-43d7-a9c4-28e9475dcace",
+      "result": {
+        "rows": 3,
+        "columns": [
+          "x",
+          "y"
+        ],
+        "statistics": {
+          "x": {
+            "count": 3,
+            "mean": 3.0,
+            "min": 1.0,
+            "max": 5.0,
+            "sample_variance": 4.0
+          },
+          "y": {
+            "count": 3,
+            "mean": 4.0,
+            "min": 2.0,
+            "max": 6.0,
+            "sample_variance": 4.0
+          }
+        },
+        "duration_seconds": 0.08806599100000767
+      }
+    }
+  }
+}

@@ -140,34 +140,66 @@ class EngineService:
                         raise DomainError(409, "idempotency key was used with a different request")
                     return existing, False
             self.admission(session)
-            now = self.now(session)
-            carrier: dict[str, str] = {}
-            inject(carrier)
-            job = Job(
-                id=identifier(),
-                name=request.name,
-                image=request.image,
-                command=request.command,
-                capabilities=request.capabilities,
-                status=JobStatus.PENDING,
-                priority=request.priority,
-                cpu_required=request.resources.cpu,
-                memory_required_mb=request.resources.memory_mb,
-                max_retries=request.max_retries,
-                timeout_seconds=request.timeout_seconds,
-                idempotency_key=key,
-                request_hash=digest,
-                created_at=now,
-                eligible_at=now,
-                attempts_count=0,
-                retry_count=0,
-                traceparent=carrier.get("traceparent", ""),
-            )
-            session.add(job)
-            session.flush()
-            self.event(session, job, "JOB_CREATED", now)
-            self.transition(session, job, JobStatus.QUEUED, now)
-            return job, True
+            return self.create_job(session, request, key, digest), True
+
+    def create_job(
+        self,
+        session: Session,
+        request: JobSubmit,
+        key: str | None,
+        digest: str,
+        campaign_id: str | None = None,
+        parameters: dict[str, str | int | float | bool] | None = None,
+    ) -> Job:
+        from control_plane.models import DatasetVersion, JobDependency
+
+        if request.image not in self.settings.allowed_images:
+            raise DomainError(422, "image is not allowlisted")
+        for item in request.inputs:
+            version = session.get(DatasetVersion, item.version_id)
+            if version is None or version.status != "SEALED":
+                raise DomainError(422, "job inputs must refer to sealed dataset versions")
+        parents = set(request.depends_on) | {item.job_id for item in request.artifact_inputs}
+        for parent_id in parents:
+            self.job(session, parent_id)
+        now = self.now(session)
+        carrier: dict[str, str] = {}
+        inject(carrier)
+        job = Job(
+            id=identifier(),
+            name=request.name,
+            image=request.image,
+            command=request.command,
+            capabilities=sorted(
+                set(request.capabilities)
+                | ({"dataset-inputs"} if request.inputs or request.artifact_inputs else set())
+            ),
+            status=JobStatus.PENDING,
+            priority=request.priority,
+            cpu_required=request.resources.cpu,
+            memory_required_mb=request.resources.memory_mb,
+            max_retries=request.max_retries,
+            timeout_seconds=request.timeout_seconds,
+            idempotency_key=key,
+            request_hash=digest,
+            created_at=now,
+            eligible_at=now,
+            attempts_count=0,
+            retry_count=0,
+            traceparent=carrier.get("traceparent", ""),
+            campaign_id=campaign_id,
+            parameters=parameters or {},
+            inputs=[item.model_dump() for item in request.inputs]
+            + [item.model_dump() for item in request.artifact_inputs],
+            depends_on=sorted(parents),
+        )
+        session.add(job)
+        session.flush()
+        for parent_id in job.depends_on:
+            session.add(JobDependency(job_id=job.id, parent_id=parent_id))
+        self.event(session, job, "JOB_CREATED", now)
+        self.transition(session, job, JobStatus.QUEUED, now)
+        return job
 
     def job(self, session: Session, job_id: str, lock: bool = False) -> Job:
         query = select(Job).where(Job.id == job_id)
@@ -214,7 +246,7 @@ class EngineService:
             now = self.now(session)
             if (
                 worker
-                and worker.status == "HEALTHY"
+                and worker.status in {"HEALTHY", "DRAINING"}
                 and (now - worker.last_heartbeat).total_seconds() < self.settings.worker_timeout
             ):
                 raise DomainError(409, "worker ID already has a live session")
@@ -263,7 +295,7 @@ class EngineService:
             attempt.lease_token != token
             or attempt.worker_session != session_id
             or worker.session_id != session_id
-            or worker.status != "HEALTHY"
+            or worker.status not in {"HEALTHY", "DRAINING"}
             or (now - worker.last_heartbeat).total_seconds() >= self.settings.worker_timeout
             or attempt.status not in ACTIVE
             or job.status not in ACTIVE
@@ -278,7 +310,7 @@ class EngineService:
             now = self.now(session)
             if (
                 worker.session_id != request.session_id
-                or worker.status != "HEALTHY"
+                or worker.status not in {"HEALTHY", "DRAINING"}
                 or (now - worker.last_heartbeat).total_seconds() >= self.settings.worker_timeout
             ):
                 raise DomainError(409, "worker session expired; register again")
@@ -331,7 +363,7 @@ class EngineService:
             now = self.now(session)
             if (
                 worker.session_id != session_id
-                or worker.status != "HEALTHY"
+                or worker.status not in {"HEALTHY", "DRAINING"}
                 or (now - worker.last_heartbeat).total_seconds() >= self.settings.worker_timeout
             ):
                 raise DomainError(409, "worker session expired")
@@ -359,6 +391,7 @@ class EngineService:
                     "timeout_seconds": j.timeout_seconds,
                     "lease_seconds": max(0, (a.lease_expires_at - now).total_seconds()),
                     "traceparent": j.traceparent,
+                    "has_inputs": bool(j.inputs),
                 }
                 for a, j in rows
             ]

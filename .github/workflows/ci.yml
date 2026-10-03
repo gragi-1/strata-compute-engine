@@ -4,7 +4,7 @@ permissions:
   contents: read
 jobs:
   python:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:17-bookworm
@@ -18,23 +18,45 @@ jobs:
       STRATA_DATABASE_URL: postgresql+psycopg://strata:strata@localhost:5432/strata_test
     steps:
       - uses: actions/checkout@v4
+      - name: Install PostgreSQL 17 client tools
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --silent --show-error --location \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            --output /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          cat <<'PGDG' | sudo tee /etc/apt/sources.list.d/pgdg.sources > /dev/null
+          Types: deb
+          URIs: https://apt.postgresql.org/pub/repos/apt
+          Suites: noble-pgdg
+          Architectures: amd64
+          Components: main
+          Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          PGDG
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y postgresql-client-17
+          echo '/usr/lib/postgresql/17/bin' >> "$GITHUB_PATH"
+          /usr/lib/postgresql/17/bin/pg_dump --version
+          /usr/lib/postgresql/17/bin/pg_restore --version
       - uses: astral-sh/setup-uv@v6
         with: {version: '0.9.18', python-version: '3.12'}
-      - run: uv sync --locked
+      - run: uv sync --locked --extra analysis
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: node --check control_plane/web/app.js
       - run: uv run ruff check . && uv run ruff format --check . && uv run mypy
       - run: uv run alembic upgrade head && uv run alembic check
       - run: uv run pytest --cov --cov-report=xml
       - uses: actions/upload-artifact@v4
         with: {name: coverage, path: coverage.xml}
   cpp:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y libgrpc++-dev protobuf-compiler-grpc libprotobuf-dev protobuf-compiler libcurl4-openssl-dev libarchive-dev nlohmann-json3-dev
       - run: cmake -S worker_cpp -B build/cpp -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build/cpp -j2 && ctest --test-dir build/cpp --output-on-failure
   docker:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -43,12 +65,22 @@ jobs:
       - run: uv sync --locked
       - run: docker compose up --build -d
       - run: uv run python scripts/e2e_live.py
+      - run: uv run python -m scripts.platform_e2e
+      - run: uv run python -m scripts.network_probe
       - run: uv run python scripts/partition_probe.py
       - run: uv run python scripts/failure_demo.py --samples 10000000 --min-duration 0
       - if: always()
         run: docker compose logs --no-color > compose.log
       - if: always()
         uses: actions/upload-artifact@v4
-        with: {name: deployment-evidence, path: "compose.log\ndocs/demo/*.cast\ndocs/demo/*.json"}
+        with:
+          name: deployment-evidence
+          path: |
+            compose.log
+            docs/demo/*.cast
+            docs/demo/*.json
+            build/platform-validation/*
+            build/network-validation/**/evidence.json
+            build/network-validation/**/*.log
       - if: always()
         run: docker compose down -v

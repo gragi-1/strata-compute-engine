@@ -10,6 +10,8 @@ service WorkerControl {
   rpc Complete(CompleteRequest) returns (Empty);
   rpc PutLogs(LogsRequest) returns (Empty);
   rpc PutArtifact(ArtifactRequest) returns (ArtifactReply);
+  rpc InputManifest(AttemptRequest) returns (InputManifestReply);
+  rpc ReadInput(ReadInputRequest) returns (stream InputChunk);
 }
 message Empty {}
 message RegisterRequest { string worker_id = 1; double cpu_total = 2; int64 memory_total_mb = 3; repeated string capabilities = 4; }
@@ -19,7 +21,7 @@ message HeartbeatRequest { string worker_id = 1; string session_id = 2; double c
 message LeaseCommand { string attempt_id = 1; bool valid = 2; bool cancel = 3; double lease_seconds = 4; }
 message HeartbeatReply { repeated LeaseCommand commands = 1; }
 message PollRequest { string worker_id = 1; string session_id = 2; }
-message Assignment { string attempt_id = 1; string lease_token = 2; string job_id = 3; string image = 4; repeated string command = 5; double cpu = 6; int64 memory_mb = 7; int32 timeout_seconds = 8; double lease_seconds = 9; string traceparent = 10; }
+message Assignment { string attempt_id = 1; string lease_token = 2; string job_id = 3; string image = 4; repeated string command = 5; double cpu = 6; int64 memory_mb = 7; int32 timeout_seconds = 8; double lease_seconds = 9; string traceparent = 10; bool has_inputs = 11; }
 message PollReply { repeated Assignment assignments = 1; }
 message AttemptRequest { string attempt_id = 1; string session_id = 2; string lease_token = 3; }
 enum Outcome { OUTCOME_UNSPECIFIED = 0; SUCCEEDED = 1; FAILED = 2; TIMED_OUT = 3; CANCELLED = 4; }
@@ -27,3 +29,7 @@ message CompleteRequest { AttemptRequest credentials = 1; Outcome outcome = 2; i
 message LogsRequest { AttemptRequest credentials = 1; string content = 2; }
 message ArtifactRequest { AttemptRequest credentials = 1; string name = 2; string content_type = 3; bytes content = 4; }
 message ArtifactReply { string id = 1; string sha256 = 2; int64 size = 3; }
+message InputFile { string alias = 1; string name = 2; string sha256 = 3; int64 size = 4; }
+message InputManifestReply { repeated InputFile files = 1; }
+message ReadInputRequest { AttemptRequest credentials = 1; string sha256 = 2; int64 offset = 3; int32 max_bytes = 4; }
+message InputChunk { bytes content = 1; }

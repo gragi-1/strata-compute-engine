@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import JSON, CheckConstraint, Float, ForeignKey, Index, Integer, String, Text, text
@@ -36,6 +37,16 @@ class Job(Base):
     idempotency_key: Mapped[str | None] = mapped_column(String(256), unique=True)
     request_hash: Mapped[str] = mapped_column(String(64))
     traceparent: Mapped[str] = mapped_column(String(128), default="")
+    campaign_id: Mapped[str | None] = mapped_column(
+        ForeignKey("campaigns.id", name="jobs_campaign_id_fkey"), index=True
+    )
+    parameters: Mapped[dict[str, str | int | float | bool]] = mapped_column(
+        JSON, default=dict, server_default=text("'{}'")
+    )
+    inputs: Mapped[list[dict[str, str]]] = mapped_column(
+        JSON, default=list, server_default=text("'[]'")
+    )
+    depends_on: Mapped[list[str]] = mapped_column(JSON, default=list, server_default=text("'[]'"))
     attempts_count: Mapped[int] = mapped_column(default=0)
     retry_count: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
@@ -128,3 +139,49 @@ class WorkerHeartbeat(Base):
     cpu_available: Mapped[float] = mapped_column(Float)
     memory_available_mb: Mapped[int] = mapped_column(Integer)
     running_jobs: Mapped[int] = mapped_column(Integer)
+
+
+class Campaign(Base):
+    __tablename__ = "campaigns"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    name: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(Text)
+    specification: Mapped[dict[str, Any]] = mapped_column(JSON)
+    request_hash: Mapped[str] = mapped_column(String(64))
+    idempotency_key: Mapped[str | None] = mapped_column(String(256), unique=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class Dataset(Base):
+    __tablename__ = "datasets"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    name: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class DatasetVersion(Base):
+    __tablename__ = "dataset_versions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id"), index=True)
+    label: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(16), default="DRAFT")
+    manifest_hash: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class DatasetFile(Base):
+    __tablename__ = "dataset_files"
+    __table_args__ = (Index("uq_dataset_file", "version_id", "name", unique=True),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    version_id: Mapped[str] = mapped_column(ForeignKey("dataset_versions.id"), index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    size: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class JobDependency(Base):
+    __tablename__ = "job_dependencies"
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id"), primary_key=True)
+    parent_id: Mapped[str] = mapped_column(ForeignKey("jobs.id"), primary_key=True, index=True)

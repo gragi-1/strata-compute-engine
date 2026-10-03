@@ -10,6 +10,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_l
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 
+from control_plane.auth import authorize
 from control_plane.config import Settings
 from control_plane.database import make_engine, sessions
 from control_plane.domain import JobStatus
@@ -39,7 +40,7 @@ def create_app(settings: Settings | None = None, service: EngineService | None =
         configure_tracing("strata-api")
         yield
 
-    app = FastAPI(title="Strata Compute Engine", version="1.0.0", lifespan=lifespan)
+    app = FastAPI(title="Strata Compute Engine", version="2.0.0", lifespan=lifespan)
     app.state.service = svc
     registry = CollectorRegistry()
     registry.register(DurableCollector(svc))
@@ -54,13 +55,57 @@ def create_app(settings: Settings | None = None, service: EngineService | None =
 
     @app.middleware("http")
     async def traced(request: Request, call_next: Any) -> Response:
+        public = request.url.path in {
+            "/",
+            "/health",
+            "/ready",
+            "/metrics",
+            "/docs",
+            "/openapi.json",
+            "/docs/oauth2-redirect",
+        } or request.url.path.startswith("/app/")
+        if not public and not request.url.path.startswith("/internal/"):
+            try:
+                request.state.role = authorize(
+                    config, request.method, request.headers.get("authorization")
+                )
+            except DomainError as exc:
+                return JSONResponse(
+                    {"detail": str(exc)},
+                    status_code=exc.code,
+                    headers={"WWW-Authenticate": "Bearer"} if exc.code == 401 else {},
+                )
         with tracer.start_as_current_span(
             f"{request.method} {request.url.path}",
             context=extract(
                 dict(request.headers),
             ),
         ):
-            return await call_next(request)  # type: ignore[no-any-return]
+            response: Response = await call_next(request)
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["Referrer-Policy"] = "same-origin"
+            return response
+
+    @app.get("/session")
+    def session_role(request: Request) -> dict[str, Any]:
+        return {"role": request.state.role, "authentication_enabled": bool(config.api_keys)}
+
+    @app.post("/workers/{worker_id}/{action}")
+    def worker_action(worker_id: str, action: str, request: Request) -> dict[str, Any]:
+        if request.state.role != "admin":
+            raise DomainError(403, "administrator access is required")
+        if action not in {"drain", "resume"}:
+            raise DomainError(404, "unknown worker action")
+        with svc.factory.begin() as session:
+            worker = svc.worker(session, worker_id, lock=True)
+            if (
+                worker.status == "LOST"
+                or (svc.now(session) - worker.last_heartbeat).total_seconds()
+                >= config.worker_timeout
+            ):
+                raise DomainError(409, "worker is not live")
+            worker.status = "DRAINING" if action == "drain" else "HEALTHY"
+            return row_view(worker, {"session_id"})
 
     @app.post("/jobs", response_model=JobView, status_code=201)
     def submit(
@@ -143,7 +188,7 @@ def create_app(settings: Settings | None = None, service: EngineService | None =
                 for a in session.scalars(
                     select(Artifact)
                     .where(Artifact.job_id == job_id)
-                    .order_by(Artifact.created_at)
+                    .order_by(Artifact.created_at, Artifact.id)
                     .limit(limit)
                     .offset(offset),
                 )
@@ -209,6 +254,26 @@ def create_app(settings: Settings | None = None, service: EngineService | None =
 
         recovered, assigned = Scheduler(svc).tick()
         return {"recovered": recovered, "assigned": assigned}
+
+    from pathlib import Path
+
+    from fastapi.staticfiles import StaticFiles
+
+    from control_plane.resource_api import resource_router
+
+    app.include_router(resource_router(svc))
+    static = Path(__file__).parent / "web"
+    app.mount("/app", StaticFiles(directory=static, html=True), name="web")
+
+    @app.get("/", include_in_schema=False)
+    def home() -> FileResponse:
+        return FileResponse(
+            static / "index.html",
+            headers={
+                "Content-Security-Policy": "default-src 'self'; script-src 'self'; "
+                "style-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+            },
+        )
 
     return app
 

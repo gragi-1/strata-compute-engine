@@ -2,7 +2,15 @@
 
 [![CI](https://github.com/gragi-1/strata-compute-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/gragi-1/strata-compute-engine/actions/workflows/ci.yml)
 
-Fault-tolerant distributed execution of containerized Python and C++ compute workloads, backed by PostgreSQL, fenced leases and resource-aware scheduling.
+A compute workspace for running containerized programs, organizing datasets, executing parameter sweeps and dependency workflows, and collecting reproducible results. Durable scheduling and recovery are backed by PostgreSQL and fenced leases; Python and C++ worker agents execute the jobs.
+
+**The v2 workspace has been validated locally.** Consult [release history](https://github.com/gragi-1/strata-compute-engine/releases) for published versions; the CI badge reflects pushed commits. See [v2 validation](docs/validation-v2.md) for the evidence and its limits.
+
+![Strata compute workspace](docs/demo/compute-workspace.png)
+
+Use Strata when you have many independent computations, data-processing stages or experiments to run and want a queue, bounded execution, a durable history and a common place for inputs and outputs. It runs finite CPU programs packaged in approved Docker images. Your program supplies the computation; Strata supplies its execution and organization.
+
+Start with [the workspace guide](docs/platform.md), [network deployment](docs/deployment.md) and [security boundaries](docs/security.md).
 
 ## Why?
 
@@ -12,15 +20,15 @@ A compute job should survive the machine assigned to it. Strata makes scheduling
 
 ```mermaid
 flowchart TD
-    Client[CLI / REST client] --> API[FastAPI control plane]
-    API --> DB[(PostgreSQL: jobs, attempts, leases, events)]
+    Client[Web workspace / CLI / Python SDK] --> API[FastAPI control plane]
+    API --> DB[(PostgreSQL: campaigns, datasets, jobs, attempts, leases)]
     Scheduler[Concurrent schedulers] --> DB
     RPC[gRPC worker control] --> DB
     Python[Python agents] -->|poll / heartbeat / report| RPC
     CPP[C++ agents] -->|same Protobuf protocol| RPC
     Python --> Containers[Isolated workload containers]
     CPP --> Containers
-    RPC --> Artifacts[(Content-addressed artifacts)]
+    RPC --> Artifacts[(Content-addressed inputs and artifacts)]
     API --> Artifacts
     Prometheus[Prometheus / Grafana] --> API
     API --> Tracing[OpenTelemetry / Jaeger]
@@ -31,6 +39,13 @@ Workers pull committed assignments. The scheduler never needs a worker's network
 
 ## Features
 
+- Web workspace with jobs, attempts, logs, artifacts, campaign results, dataset previews and worker capacity.
+- Atomic parameter sweeps with repetitions, idempotency, CSV/JSON exports and optional scientific PNG/PDF reports.
+- Validated dependency workflows with successful predecessor artifacts staged as downstream inputs.
+- Immutable, hashed dataset versions; streaming input transfer to read-only `/inputs` on either agent.
+- Bounded CSV, TSV, JSON, NumPy and Parquet previews, plus a streaming numerical profiling example.
+- Python SDK and CLI for scripts and notebooks; API roles, verified gRPC TLS, worker draining and deployment templates.
+- PostgreSQL snapshot backups with verified blobs, safe empty-target restore and storage auditing.
 - Persistent priority / FIFO scheduling with least-loaded or best-fit placement and transactional CPU/RAM reservations.
 - Multiple schedulers using row locks, `SKIP LOCKED` and a unique active-attempt constraint.
 - Worker heartbeats, session fencing, expiring leases, exponential retries and bounded queue admission.
@@ -75,6 +90,7 @@ The one-shot migration service initializes PostgreSQL before the API, scheduler 
 
 | Interface | Local address |
 |---|---|
+| Compute workspace | http://localhost:8000/ |
 | OpenAPI / submit jobs | http://localhost:8000/docs |
 | Grafana dashboard | http://localhost:3000 |
 | Prometheus | http://localhost:9090 |
@@ -83,7 +99,7 @@ The one-shot migration service initializes PostgreSQL before the API, scheduler 
 Install the client and developer tooling with Python 3.12+ and [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv sync --locked
+uv sync --locked --extra analysis
 uv run strata submit examples/wave.yaml --idempotency-key wave-demo-1
 uv run strata status JOB_ID --watch
 uv run strata attempts JOB_ID
@@ -93,6 +109,18 @@ uv run strata workers
 ```
 
 Alternatively, the client is already installed in the API container: `docker compose exec api strata submit examples/wave.yaml`. Set `STRATA_API_URL` for a remote trusted deployment. `strata cancel`, `retry` and `events` provide the other lifecycle controls.
+
+Run a sweep or a dependency workflow:
+
+```bash
+uv run strata campaign examples/campaign.yaml --idempotency-key study-001
+uv run strata campaign-status CAMPAIGN_ID
+uv run strata report CAMPAIGN_ID results/study-001 --x seed --y result.pi --group samples
+uv run strata workflow examples/workflow.yaml
+uv run strata dataset-upload Observations observations.csv
+```
+
+The report command requires the `analysis` extra. Workloads can be written in any language supported by an allowlisted image; the agent's language does not restrict the workload's language. The [guide](docs/platform.md) includes the container contract and a complete SDK example.
 
 ## Example
 
@@ -127,7 +155,7 @@ ctest --test-dir build/cpp --output-on-failure
 uv run python scripts/e2e_live.py
 ```
 
-C++ dependencies are listed in [development](docs/development.md). [CI](.github/workflows/ci.yml) runs lint, typing, coverage (85% floor for control plane/scheduler), migrations, PostgreSQL races, C++ build/tests, Docker builds, real workloads and fault injection. A passing GitHub badge should be added after this repository has a remote and its workflow has actually passed.
+C++ dependencies are listed in [development](docs/development.md). [CI](.github/workflows/ci.yml) runs lint, typing, coverage (85% floor for control plane/scheduler), migrations, PostgreSQL races, C++ build/tests, Docker builds, real workloads and fault injection. The expanded workflow also includes dataset/campaign/workflow execution and a TLS probe with independent Docker daemons. CI uses Ubuntu 24.04 and explicitly installs PostgreSQL 17 client tools for backup/restore tests. Each pushed commit has its own verification run; historical green runs apply to their recorded commits.
 
 ## Benchmarks
 
@@ -149,7 +177,7 @@ The 1000-job run recovered one launch failure through retry. The report also ret
 
 `docker compose kill worker-1` deliberately kills an agent without killing its workload container. The scheduler detects loss and retries; `docker compose start worker-1` registers a new session after the old session expires, then cleans up its old containers. `docker compose restart scheduler` preserves the queue because all authoritative state is stored in PostgreSQL. Use [the runbook](docs/operations.md) to inspect events, monitor saturation and resolve failures.
 
-All exposed ports bind to loopback by default. This is a trusted-cluster system: the shared development worker token is configurable, client REST authentication is outside this release, and Docker-socket access gives agents administrator-level authority over their daemon. Workload containers receive no socket or host-directory mounts. See [security boundaries](docs/security.md).
+All exposed ports bind to loopback by default. Local development uses an open REST API and a development worker token. Remote deployments require API role keys, HTTPS, verified RPC TLS and protected database/telemetry services; [deployment templates](docs/deployment.md) are included. Docker-socket access gives agents administrator-level authority over their daemon. Workload containers receive no socket or host-directory mounts. See [security boundaries](docs/security.md).
 
 ## Architecture decisions
 
@@ -157,7 +185,7 @@ All exposed ports bind to loopback by default. This is a trusted-cluster system:
 
 ## Roadmap
 
-The v1 implementation covers the requested scheduling, recovery, worker, client and observability features. Release evidence is recorded in [validation](docs/validation.md). Next work is driven by measurements: scheduler lock contention, retention/garbage collection, object-store artifacts and secure remote deployment. Kubernetes, consensus protocols and cloud orchestration are deliberately outside the project's scope.
+The v2 expansion adds datasets, campaigns, workflows, a web workspace, SDK, roles/TLS and backup tooling to the released v1 execution engine. Local evidence is recorded in [v2 validation](docs/validation-v2.md), with [v1 evidence](docs/validation.md) retained separately. Future extensions include object storage/retention, GPU scheduling, elastic provisioning and stronger identity/tenant isolation. These are not implemented or measured yet. Physical multi-machine throughput and sustained operational availability still require a real deployment; this development environment has one computer.
 
 ## License
 
