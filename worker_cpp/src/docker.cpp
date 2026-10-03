@@ -1,4 +1,5 @@
 #include "docker.hpp"
+#include "file.hpp"
 #include <archive.h>
 #include <archive_entry.h>
 #include <array>
@@ -131,7 +132,7 @@ void Docker::stage(const std::string &attempt, const std::string &worker, const 
                             .at("Id")
                             .get<std::string>();
     try {
-        std::unique_ptr<FILE, decltype(&std::fclose)> tar(std::tmpfile(), std::fclose);
+        File tar(std::tmpfile());
         if (!tar)
             throw std::runtime_error("cannot create staging archive");
         std::unique_ptr<archive, decltype(&archive_write_free)> writer(archive_write_new(),

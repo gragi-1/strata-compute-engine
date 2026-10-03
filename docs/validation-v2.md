@@ -1,6 +1,6 @@
 # v2 workspace validation
 
-This page records actual local checks performed on **2026-10-03** (Europe/Madrid), during preparation of v2.0.0 and before its first GitHub Actions run. These results are separate from [v1's historical CI evidence](validation.md). Consult [workflow runs](https://github.com/gragi-1/strata-compute-engine/actions/workflows/ci.yml) for verification of pushed commits; local results do not assert a GitHub CI outcome.
+This page records actual local checks performed on **2026-10-03** (Europe/Madrid), during preparation of v2.0.0, including follow-up validation after its first GitHub Actions run. These results are separate from [v1's historical CI evidence](validation.md). Consult [workflow runs](https://github.com/gragi-1/strata-compute-engine/actions/workflows/ci.yml) for verification of pushed commits; local results do not assert a GitHub CI outcome.
 
 ## Environment and evidence
 
@@ -11,7 +11,7 @@ One physical Windows computer, Python 3.13.5, PostgreSQL 17.11, Docker Desktop w
 | Ruff lint / format | Passed |
 | Strict mypy | Passed for 31 authored source files |
 | JavaScript syntax | `node --check control_plane/web/app.js` passed |
-| Python tests | **92 passed**, with the real PostgreSQL tests enabled |
+| Python tests | **93 passed**, with the real PostgreSQL tests enabled |
 | Coverage | **93.38%** for authored control-plane/scheduler code; 85% required |
 | C++ build and CTest | Complete gRPC/Docker/OpenSSL agent built; **2/2** tests passed |
 | Schema upgrade | Existing v1 jobs preserved during the additive PostgreSQL migration; empty-database upgrade and downgrade/upgrade/check also verified |
@@ -41,6 +41,16 @@ The new tests cover immutable version sealing, conflicting uploads, bounded nati
 The live input test crosses the 4 MiB RPC range limit and checks both worker implementations. The network probe uses disposable privileged Docker-in-Docker fixtures with separate image/volume stores and private Unix sockets. It preloads the workload image into each daemon and copies the input through the real RPC path. Both agents independently computed three rows, means **3** and **4**, and sample variances **4**. No second physical computer was available, so this proves separate-daemon execution and verified transport, not physical multi-machine speedup or availability.
 
 Failures encountered during development were corrected and rerun: new non-null JSON columns needed server defaults for existing jobs; a web form had a JavaScript syntax error; the network test initially mounted a Docker socket directory over its certificate directory. The Windows C: drive also exhausted its capacity and stalled Docker. Strata-generated temporary/download/cache files and the disposable native PostgreSQL test cluster were removed; the application database/artifact volumes were retained. Docker was recovered, each final image built once, and the platform/TLS probes passed again. Storage capacity remains an operational constraint, especially for larger datasets, image builds and backups.
+
+## CI failure follow-up
+
+[CI run 37116181098](https://github.com/gragi-1/strata-compute-engine/actions/runs/37116181098), for commit [76a737e](https://github.com/gragi-1/strata-compute-engine/commit/76a737ea2d8702afe34bdc9114b488a8dc06b70f), completed with a successful Docker job and failures in the Python and C++ jobs.
+
+The PostgreSQL concurrency test expected 100 assignments after 40 calls per scheduler. That fixed call count did not account for an arbitrary number of empty calls under contention; both job and worker selection already used `FOR UPDATE SKIP LOCKED`. A scheduler can return zero while another transaction holds the worker rows. The original test reproduced locally with only 91 assignments. The corrected test retries within a 30-second deadline, still requires exactly 100 unique first attempts and verifies each worker's CPU, RAM and container reservations. A separate deterministic test holds the worker lock, verifies that the job stays queued without reservations, then checks successful assignment after releasing the lock. Both cases passed ten independent repetitions each.
+
+The C++ job rejected the `decltype(&std::fclose)` deleter under `-Werror=ignored-attributes`. Both temporary-file sites now use a shared `FileCloser` and `File` RAII wrapper, retaining automatic file closure and the existing warnings-as-errors policy. The complete worker rebuilt under local GCC 11.4 and both CTest cases passed. The Ubuntu runner's compiler still needs verification in the next pushed CI run.
+
+Follow-up local validation passed all **93 Python tests**, including all **seven PostgreSQL tests**, with **93.38%** coverage. A successful GitHub run for the corrected commit remains required before tagging or publishing v2.0.0.
 
 ## Reproduce
 

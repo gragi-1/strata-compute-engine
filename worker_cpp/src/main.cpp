@@ -1,5 +1,6 @@
 #include "docker.hpp"
 #include "engine.grpc.pb.h"
+#include "file.hpp"
 #include "lease_tracker.hpp"
 #include <atomic>
 #include <chrono>
@@ -335,7 +336,7 @@ class Agent {
                 heartbeat();
         };
         for (const auto &file : manifest.files()) {
-            std::unique_ptr<FILE, decltype(&std::fclose)> stream(std::tmpfile(), std::fclose);
+            strata::File stream(std::tmpfile());
             if (!stream)
                 throw std::runtime_error("cannot create input buffer");
             std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> digest(EVP_MD_CTX_new(),

@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Barrier, Event, Lock
+from time import monotonic
 
 import pytest
 from sqlalchemy import func, select
@@ -48,22 +49,72 @@ def test_two_schedulers_assign_100_jobs_once_and_reserve_atomically(postgres_ser
     for _ in range(100):
         submit(svc, resources={"cpu": 0.5, "memory_mb": 32})
     barrier = Barrier(2)
+    finished = Event()
+    count_lock = Lock()
+    total_assigned = 0
+    deadline = monotonic() + 30
 
     def run():
-        barrier.wait()
+        nonlocal total_assigned
+        barrier.wait(timeout=5)
         scheduler = Scheduler(svc)
-        for _ in range(40):
-            scheduler.schedule()
+        assigned_count = 0
+        # SKIP LOCKED can return zero while another transaction owns worker capacity.
+        # Retry until all jobs are committed, rather than counting empty scheduling ticks.
+        while not finished.is_set() and monotonic() < deadline:
+            assigned = scheduler.schedule()
+            assigned_count += assigned
+            with count_lock:
+                total_assigned += assigned
+                if total_assigned >= 100:
+                    finished.set()
+            if assigned == 0:
+                finished.wait(0.01)
+        return assigned_count
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        list(pool.map(lambda _: run(), range(2)))
+        counts = list(pool.map(lambda _: run(), range(2)))
+    assert sum(counts) == 100
     with svc.factory() as session:
         attempts = list(session.scalars(select(Attempt)))
         assert len(attempts) == 100
         assert len({a.job_id for a in attempts}) == 100
+        assert all(a.number == 1 and a.status == "SCHEDULED" for a in attempts)
+        jobs = list(session.scalars(select(Job)))
+        assert all(j.attempts_count == 1 and j.status == "SCHEDULED" for j in jobs)
         workers = list(session.scalars(select(Worker)))
         assert sum(w.cpu_reserved for w in workers) == 50
-        assert all(w.cpu_reserved <= w.cpu_total for w in workers)
+        assert sum(w.memory_reserved_mb for w in workers) == 3200
+        assert sum(w.running_jobs for w in workers) == 100
+        for worker in workers:
+            attempt_count = len([a for a in attempts if a.worker_id == worker.id])
+            assert worker.cpu_reserved == attempt_count * 0.5 <= worker.cpu_total
+            assert worker.memory_reserved_mb == attempt_count * 32 <= worker.memory_total_mb
+            assert worker.running_jobs == attempt_count <= svc.settings.worker_max_jobs
+
+
+def test_scheduler_retries_jobs_after_worker_locks_are_released(postgres_service):
+    svc = postgres_service
+    worker = register(svc)
+    job = submit(svc, resources={"cpu": 0.5, "memory_mb": 32})
+    with ThreadPoolExecutor(max_workers=1) as pool, svc.factory.begin() as lock_holder:
+        locked_worker = lock_holder.scalar(select(Worker).with_for_update())
+        assert locked_worker.id == worker.id
+        assert pool.submit(Scheduler(svc).schedule).result(timeout=5) == 0
+        assert locked_worker.cpu_reserved == 0
+        assert locked_worker.memory_reserved_mb == 0
+        assert locked_worker.running_jobs == 0
+        assert lock_holder.scalar(select(func.count()).select_from(Attempt)) == 0
+        queued_job = lock_holder.get(Job, job.id)
+        assert queued_job.status == "QUEUED" and queued_job.attempts_count == 0
+    assert Scheduler(svc).schedule() == 1
+    with svc.factory() as session:
+        attempt = session.scalar(select(Attempt))
+        assert attempt.job_id == job.id and attempt.worker_id == worker.id
+        reserved_worker = session.get(Worker, worker.id)
+        assert reserved_worker.cpu_reserved == 0.5
+        assert reserved_worker.memory_reserved_mb == 32
+        assert reserved_worker.running_jobs == 1
 
 
 def test_cancel_completion_race_uses_commit_order(postgres_service):
