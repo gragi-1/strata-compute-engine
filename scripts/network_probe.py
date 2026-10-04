@@ -25,6 +25,14 @@ def main():
     output.mkdir(parents=True)
     cert, key = certificates(output)
     containers, volumes = [], []
+    control_image = os.getenv("STRATA_TEST_CONTROL_IMAGE", "strata/control-plane:local")
+    cpp_image = os.getenv("STRATA_TEST_CPP_IMAGE", "strata/worker-cpp:local")
+    keeper_image = os.getenv("STRATA_STORAGE_KEEPER_IMAGE", control_image)
+    parent_network = os.getenv("STRATA_PROBE_NETWORK", "strata_default")
+    artifact_volume = os.getenv("STRATA_PROBE_ARTIFACT_VOLUME", "strata_artifacts")
+    database_url = os.getenv(
+        "STRATA_DATABASE_URL", "postgresql+psycopg://strata:strata@postgres:5432/strata"
+    )
 
     def command(*args, input_file=None):
         result = subprocess.run([docker, *args], stdin=input_file, capture_output=True, check=True)
@@ -34,7 +42,15 @@ def main():
     socket_volumes = []
     try:
         image_tar = output / "workload.tar"
-        command("image", "save", "--output", str(image_tar), "strata/python-workloads:local")
+        # Independent daemons need both the workload and v3's output-retention image.
+        command(
+            "image",
+            "save",
+            "--output",
+            str(image_tar),
+            "strata/python-workloads:local",
+            keeper_image,
+        )
         tls_volume = prefix + "-tls"
         command("volume", "create", "--label", "strata.validation=network", tls_volume)
         volumes.append(tls_volume)
@@ -44,7 +60,7 @@ def main():
             "strata.validation=network",
             "--volume",
             f"{tls_volume}:/run/tls",
-            "strata/control-plane:local",
+            control_image,
             "true",
         )
         containers.append(seed)
@@ -58,13 +74,13 @@ def main():
                 "--name",
                 rpc_name,
                 "--network",
-                "strata_default",
+                parent_network,
                 "--network-alias",
                 f"tls-rpc-{nonce}",
                 "--label",
                 "strata.validation=network",
                 "--env",
-                "STRATA_DATABASE_URL=postgresql+psycopg://strata:strata@postgres:5432/strata",
+                f"STRATA_DATABASE_URL={database_url}",
                 "--env",
                 f"STRATA_WORKER_TOKEN={token}",
                 "--env",
@@ -76,8 +92,8 @@ def main():
                 "--volume",
                 f"{tls_volume}:/run/tls:ro",
                 "--volume",
-                "strata_artifacts:/app/data/artifacts",
-                "strata/control-plane:local",
+                f"{artifact_volume}:/app/data/artifacts",
+                control_image,
                 "strata-rpc",
             )
         )
@@ -149,6 +165,8 @@ def main():
                 "--env",
                 "STRATA_WORKER_MEMORY_MB=512",
                 "--env",
+                f"STRATA_STORAGE_KEEPER_IMAGE={keeper_image}",
+                "--env",
                 "DOCKER_HOST=unix:///run/strata-docker/docker.sock",
                 "--env",
                 "STRATA_DOCKER_SOCKET=/run/strata-docker/docker.sock",
@@ -157,11 +175,7 @@ def main():
                 "--volume",
                 f"{tls_volume}:/run/tls:ro",
             ]
-            args.extend(
-                ["strata/control-plane:local", "strata-worker"]
-                if kind == "python"
-                else ["strata/worker-cpp:local"]
-            )
+            args.extend([control_image, "strata-worker"] if kind == "python" else [cpp_image])
             containers.append(command(*args))
         with httpx.Client(
             base_url=os.getenv("STRATA_API_URL", "http://localhost:8000"),
@@ -205,7 +219,8 @@ def main():
                         ],
                         "capabilities": [f"node:{prefix}-{kind}"],
                         "inputs": [{"version_id": version["id"], "alias": "data"}],
-                        "resources": {"cpu": 1, "memory_mb": 256},
+                        # Leave capacity for the separately charged output keeper.
+                        "resources": {"cpu": 0.5, "memory_mb": 256},
                         "max_retries": 0,
                         "timeout_seconds": 120,
                     },

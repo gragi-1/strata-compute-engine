@@ -25,14 +25,18 @@ def wait_ready(client, timeout=180):
 
 def wait_job(client, job_id, timeout=180):
     deadline = time.monotonic() + timeout
+    last_status = "not observed"
     while time.monotonic() < deadline:
         response = client.get(f"/jobs/{job_id}")
         response.raise_for_status()
         job = response.json()
+        last_status = job["status"]
         if job["status"] in {"SUCCEEDED", "FAILED", "TIMED_OUT", "CANCELLED"}:
             return job
         time.sleep(0.2)
-    raise TimeoutError(f"job {job_id} did not finish")
+    raise TimeoutError(
+        f"job {job_id} did not finish within {timeout}s; last observed status: {last_status}"
+    )
 
 
 def main():
