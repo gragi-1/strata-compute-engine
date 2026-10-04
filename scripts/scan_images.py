@@ -30,8 +30,6 @@ def scan(images: list[str], output: Path, cache: Path, docker: str = "docker") -
         "--mount",
         "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock,readonly",
         "--mount",
-        f"type=bind,source={output},target=/reports",
-        "--mount",
         f"type=bind,source={cache},target=/root/.cache",
         SCANNER,
         "image",
@@ -48,23 +46,20 @@ def scan(images: list[str], output: Path, cache: Path, docker: str = "docker") -
         metadata = json.loads(subprocess.check_output([docker, "image", "inspect", image]))[0]
         name = image.replace("/", "_").replace(":", "_").replace("@", "_")
         report, sbom = output / (name + ".vulnerabilities.json"), output / (name + ".sbom.json")
-        subprocess.run(
-            base
-            + [
-                "--severity",
-                "HIGH,CRITICAL",
-                "--format",
-                "json",
-                "--output",
-                "/reports/" + report.name,
-                metadata["Id"],
-            ],
-            check=True,
-        )
-        subprocess.run(
-            base + ["--format", "cyclonedx", "--output", "/reports/" + sbom.name, metadata["Id"]],
-            check=True,
-        )
+        # Host-owned files remain writable when appending vendor inventory on Linux.
+        # A root scanner writing a bind mount would leave root-owned 0644 files.
+        with report.open("wb") as stream:
+            subprocess.run(
+                base + ["--severity", "HIGH,CRITICAL", "--format", "json", metadata["Id"]],
+                stdout=stream,
+                check=True,
+            )
+        with sbom.open("wb") as stream:
+            subprocess.run(
+                base + ["--format", "cyclonedx", metadata["Id"]],
+                stdout=stream,
+                check=True,
+            )
         component_file = {
             "worker-cpp": Path("worker_cpp/vendor-components.json"),
             "postgres-ha": Path("deploy/ha/vendor-components.json"),

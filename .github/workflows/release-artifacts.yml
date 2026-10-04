@@ -67,7 +67,7 @@ jobs:
           uv run --no-sync python -m scripts.scan_images --output build/release --cache build/trivy-cache \
             "strata/control-plane:$version" "strata/worker-cpp:$version" "strata/python-workloads:$version" \
             "strata/wave-solver:$version" "strata/gpu-smoke:$version" "strata/postgres-ha:$version" \
-            "strata/ha-gateway:$version" gcr.io/etcd-development/etcd:v3.6.15
+            "strata/ha-gateway:$version" gcr.io/etcd-development/etcd:v3.6.15@sha256:5ed4e32061aa061f970d6500629213e8579ef17571dcf9789074966acb9afad1
           for image in control-plane worker-cpp python-workloads wave-solver gpu-smoke postgres-ha ha-gateway; do
             docker save "strata/$image:$version" | gzip -n > "build/release/$image-$version-linux-amd64.tar.gz"
           done

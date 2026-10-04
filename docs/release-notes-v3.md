@@ -18,6 +18,7 @@ Strata now provides a shared compute workspace for programs, simulations and dat
 - Durable maintenance controls, bounded Docker host CPU worker pools with safe drain/reconciliation, independent orphan cleanup, automated backups/restore drills and actionable alert rules.
 - Supervised API/RPC replicas with shared objects and verified transport TLS, plus PostgreSQL/Patroni/etcd primary recovery, rejoin and quorum write fencing.
 - Installable versioned packages with bundled migrations/browser assets, deterministic wheel/source builds, clean-install verification, retained dependency/image reports and a manually dispatched candidate provenance workflow.
+- Explicit Linux/Windows type checks for storage locking, host-owned security reports that support native vendor inventories, and consistent pinned etcd inspection in CI and release scans.
 
 ## Local qualification
 

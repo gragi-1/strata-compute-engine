@@ -4,6 +4,7 @@ import hashlib
 import os
 import re
 import shutil
+import sys
 import tempfile
 import time
 from collections.abc import Iterator
@@ -24,7 +25,7 @@ def try_lock(stream: BinaryIO) -> bool:
     """Take a nonblocking OS lock; the kernel releases it when the owner exits."""
     try:
         stream.seek(0)
-        if os.name == "nt":
+        if sys.platform == "win32":
             import msvcrt
 
             msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
@@ -40,7 +41,7 @@ def try_lock(stream: BinaryIO) -> bool:
 
 def unlock(stream: BinaryIO) -> None:
     stream.seek(0)
-    if os.name == "nt":
+    if sys.platform == "win32":
         import msvcrt
 
         msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
@@ -237,7 +238,7 @@ class BlobStore:
             deadline = time.monotonic() + self.config.storage_lock_timeout_seconds
             while True:
                 try:
-                    if os.name == "nt":
+                    if sys.platform == "win32":
                         import msvcrt
 
                         lock.seek(0)
@@ -257,7 +258,7 @@ class BlobStore:
                 yield
             finally:
                 _held_roots.reset(token)
-                if os.name == "nt":
+                if sys.platform == "win32":
                     lock.seek(0)
                     msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
                 else:

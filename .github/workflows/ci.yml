@@ -58,7 +58,12 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: "22" }
       - run: node --check control_plane/web/app.js
-      - run: uv run ruff check . && uv run ruff format --check . && uv run mypy
+      - name: Lint, format and type-check both supported host platforms
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy --platform linux
+          uv run mypy --platform win32
       - run: uv run alembic upgrade head && uv run alembic check
       - run: uv run pytest --cov --cov-report=xml
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -237,7 +242,7 @@ jobs:
           uv run --no-sync python -m scripts.scan_images --output build/security --cache build/trivy-cache \
             strata/control-plane:security strata/worker-cpp:security strata/python-workloads:security \
             strata/wave-solver:security strata/gpu-smoke:security strata/postgres-ha:security \
-            strata/ha-gateway:security gcr.io/etcd-development/etcd:v3.6.15
+            strata/ha-gateway:security gcr.io/etcd-development/etcd:v3.6.15@sha256:5ed4e32061aa061f970d6500629213e8579ef17571dcf9789074966acb9afad1
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with: { name: security-evidence, path: "build/security/*" }
