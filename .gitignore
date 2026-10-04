@@ -13,6 +13,7 @@ htmlcov/
 backups/
 *.db
 build/
+node_modules/
 data/
 *.egg-info/
 benchmarks/results/*.json

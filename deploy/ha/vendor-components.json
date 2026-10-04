@@ -1,0 +1,29 @@
+{
+  "components": [
+    {
+      "type": "application",
+      "name": "PostgreSQL",
+      "version": "17.11",
+      "purl": "pkg:generic/postgresql@17.11",
+      "licenses": [{ "license": { "id": "PostgreSQL" } }],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "dd27f2b3c59e73ed14aa3324901242bf69a032a6347805f274e6260322d42979"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://ftp.postgresql.org/pub/source/v17.11/postgresql-17.11.tar.bz2"
+        }
+      ],
+      "properties": [
+        {
+          "name": "strata:build-options",
+          "value": "OpenSSL, LZ4, Zstd; XML/XSLT, ICU, LLVM and server-side Python/Perl/Tcl disabled"
+        }
+      ]
+    }
+  ]
+}

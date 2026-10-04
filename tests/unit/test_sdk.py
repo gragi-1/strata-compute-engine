@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from strata_sdk import Client
+from strata_sdk.transport import request_with_retry
 
 
 def client_for(rows, content):
@@ -52,3 +53,60 @@ def test_invalid_download_keeps_existing_files_and_removes_partial_data(tmp_path
         client.artifacts("job", tmp_path)
     assert target.read_bytes() == b"previous result"
     assert list(tmp_path.iterdir()) == [target]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "headers", "count"),
+    [
+        ("GET", "/jobs", {}, 4),
+        ("POST", "/jobs", {}, 1),
+        ("POST", "/jobs", {"Idempotency-Key": "persisted-key"}, 4),
+        ("POST", "/auth/password", {"Idempotency-Key": "unsupported-key"}, 1),
+        ("POST", "/projects", {"Idempotency-Key": "unsupported-key"}, 1),
+        ("POST", "/dataset-files/id/statistics", {}, 4),
+        ("PUT", "/uploads/id/chunks/0", {"X-Chunk-SHA256": "abc"}, 4),
+    ],
+)
+def test_retry_boundaries_and_budget_never_repeat_unsupported_mutations(
+    monkeypatch, method, path, headers, count
+):
+    calls = []
+    monkeypatch.setattr("strata_sdk.transport.time.sleep", lambda _: None)
+
+    def unavailable(request):
+        calls.append((request.method, request.url.path, request.content))
+        return httpx.Response(503, json={"detail": "unavailable"})
+
+    with httpx.Client(
+        base_url="http://strata.test", transport=httpx.MockTransport(unavailable)
+    ) as client:
+        result = request_with_retry(client, method, path, headers=headers, json={"stable": True})
+        assert result.status_code == 503
+        assert len(calls) == count
+        assert len(set(calls)) == 1
+        calls.clear()
+        request_with_retry(client, "GET", "/jobs", retry_window_seconds=0)
+        assert len(calls) == 1
+
+
+def test_long_retry_after_and_streaming_bodies_are_not_automatically_replayed(monkeypatch):
+    calls = []
+    monkeypatch.setattr("strata_sdk.transport.time.sleep", lambda _: pytest.fail("unexpected wait"))
+
+    def unavailable(request):
+        calls.append(request)
+        return httpx.Response(503, headers={"Retry-After": "30"}, json={"detail": "paused"})
+
+    with httpx.Client(
+        base_url="http://strata.test", transport=httpx.MockTransport(unavailable)
+    ) as client:
+        request_with_retry(client, "GET", "/jobs")
+        assert len(calls) == 1
+        request_with_retry(
+            client,
+            "POST",
+            "/jobs",
+            content=iter([b"one-shot"]),
+            headers={"Idempotency-Key": "key"},
+        )
+        assert len(calls) == 2

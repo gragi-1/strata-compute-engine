@@ -3,8 +3,33 @@ x-settings: &settings
   STRATA_DATABASE_URL: postgresql+psycopg://strata:${STRATA_DATABASE_PASSWORD:-strata}@postgres:5432/strata
   STRATA_WORKER_TOKEN: ${STRATA_WORKER_TOKEN:-local-development-token}
   STRATA_API_KEYS: ${STRATA_API_KEYS:-{}}
+  STRATA_IDENTITY_ENABLED: ${STRATA_IDENTITY_ENABLED:-false}
+  STRATA_OIDC_ISSUER: ${STRATA_OIDC_ISSUER:-}
+  STRATA_OIDC_CLIENT_ID: ${STRATA_OIDC_CLIENT_ID:-}
+  STRATA_OIDC_CLIENT_SECRET: ${STRATA_OIDC_CLIENT_SECRET:-}
+  STRATA_OIDC_TOKEN_AUTH_METHOD: ${STRATA_OIDC_TOKEN_AUTH_METHOD:-none}
+  STRATA_OIDC_REDIRECT_URI: ${STRATA_OIDC_REDIRECT_URI:-}
+  STRATA_OIDC_STATE_ENCRYPTION_KEY: ${STRATA_OIDC_STATE_ENCRYPTION_KEY:-}
+  STRATA_OIDC_ALLOWED_ORIGINS: ${STRATA_OIDC_ALLOWED_ORIGINS:-[]}
+  STRATA_WEBHOOK_TARGETS: ${STRATA_WEBHOOK_TARGETS:-{}}
+  STRATA_WEBHOOK_SECRETS: ${STRATA_WEBHOOK_SECRETS:-{}}
+  STRATA_STORAGE_BACKEND: ${STRATA_STORAGE_BACKEND:-filesystem}
+  STRATA_S3_BUCKET: ${STRATA_S3_BUCKET:-}
+  STRATA_S3_PREFIX: ${STRATA_S3_PREFIX:-strata/blobs/}
+  STRATA_S3_ENDPOINT_URL: ${STRATA_S3_ENDPOINT_URL:-}
+  STRATA_S3_REGION: ${STRATA_S3_REGION:-us-east-1}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+  AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
   STRATA_ALLOWED_IMAGES: '${STRATA_ALLOWED_IMAGES:-["strata/python-workloads:local","strata/wave-solver:local"]}'
   STRATA_ARTIFACT_ROOT: /app/data/artifacts
+  STRATA_STORAGE_MAX_LOCAL_BYTES: ${STRATA_STORAGE_MAX_LOCAL_BYTES:-21474836480}
+  STRATA_STORAGE_CACHE_BYTES: ${STRATA_STORAGE_CACHE_BYTES:-4294967296}
+  STRATA_WORKER_CACHE_ROOT: /app/data/worker-cache
+  STRATA_WORKER_CACHE_BYTES: ${STRATA_WORKER_CACHE_BYTES:-4294967296}
+  STRATA_STORAGE_KEEPER_IMAGE: ${STRATA_STORAGE_KEEPER_IMAGE:-strata/control-plane:local}
+  STRATA_WORKER_OUTPUT_BYTES: ${STRATA_WORKER_OUTPUT_BYTES:-67108864}
+  STRATA_WORKER_OUTPUT_INODES: ${STRATA_WORKER_OUTPUT_INODES:-4096}
   OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
 x-app: &app
   build: .
@@ -12,11 +37,16 @@ x-app: &app
   environment: *settings
   restart: unless-stopped
   depends_on:
-    migrate: {condition: service_completed_successfully}
+    migrate: { condition: service_completed_successfully }
 services:
   postgres:
     image: postgres:17-bookworm
-    environment: {POSTGRES_DB: strata, POSTGRES_USER: strata, POSTGRES_PASSWORD: '${STRATA_DATABASE_PASSWORD:-strata}'}
+    environment:
+      {
+        POSTGRES_DB: strata,
+        POSTGRES_USER: strata,
+        POSTGRES_PASSWORD: "${STRATA_DATABASE_PASSWORD:-strata}",
+      }
     ports: ["127.0.0.1:${STRATA_POSTGRES_PORT:-55433}:5432"]
     volumes: ["postgres-data:/var/lib/postgresql/data"]
     healthcheck:
@@ -30,13 +60,19 @@ services:
     environment: *settings
     command: [alembic, upgrade, head]
     depends_on:
-      postgres: {condition: service_healthy}
+      postgres: { condition: service_healthy }
   api:
     <<: *app
     ports: ["127.0.0.1:8000:8000"]
     volumes: ["artifacts:/app/data/artifacts"]
     healthcheck:
-      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
+      test:
+        [
+          CMD,
+          python,
+          -c,
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')",
+        ]
       interval: 3s
       timeout: 2s
       retries: 30
@@ -48,6 +84,32 @@ services:
   scheduler:
     <<: *app
     command: [strata-scheduler]
+    volumes: ["artifacts:/app/data/artifacts"]
+  events:
+    <<: *app
+    command: [strata-events]
+  operations:
+    <<: *app
+    profiles: [operations]
+    command: [strata-ops]
+    environment:
+      <<: *settings
+      STRATA_BACKUP_ROOT: /app/data/backups
+      STRATA_BACKUP_KEEP: ${STRATA_BACKUP_KEEP:-7}
+      STRATA_BACKUP_INTERVAL_SECONDS: ${STRATA_BACKUP_INTERVAL_SECONDS:-86400}
+      STRATA_BACKUP_RESTORE_DRILL: ${STRATA_BACKUP_RESTORE_DRILL:-false}
+      STRATA_MAINTENANCE_APPLY_HISTORY: ${STRATA_MAINTENANCE_APPLY_HISTORY:-false}
+      STRATA_MAINTENANCE_APPLY_BLOBS: ${STRATA_MAINTENANCE_APPLY_BLOBS:-false}
+    volumes: ["artifacts:/app/data/artifacts", "backups:/app/data/backups"]
+  host-reaper:
+    <<: *app
+    profiles: [operations]
+    user: root
+    command: [strata-reaper, run]
+    environment:
+      <<: *settings
+      STRATA_RPC_TARGET: rpc:50051
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
   worker-1:
     <<: *app
     user: root
@@ -56,10 +118,18 @@ services:
       <<: *settings
       STRATA_RPC_TARGET: rpc:50051
       STRATA_WORKER_ID: worker-1
-      STRATA_WORKER_CPU: '2'
-      STRATA_WORKER_MEMORY_MB: '1024'
+      STRATA_GPU_DISCOVERY_IMAGE: ${STRATA_WORKER_1_GPU_DISCOVERY_IMAGE:-}
+      STRATA_WORKER_CPU: "2"
+      STRATA_WORKER_MEMORY_MB: "1024"
       STRATA_ALLOWED_IMAGES: '${STRATA_ALLOWED_IMAGES:-["strata/python-workloads:local","strata/wave-solver:local"]}'
-    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
+      STRATA_STORAGE_KEEPER_IMAGE: ${STRATA_STORAGE_KEEPER_IMAGE:-strata/control-plane:local}
+      STRATA_WORKER_OUTPUT_BYTES: ${STRATA_WORKER_OUTPUT_BYTES:-67108864}
+      STRATA_WORKER_OUTPUT_INODES: ${STRATA_WORKER_OUTPUT_INODES:-4096}
+    volumes:
+      [
+        "/var/run/docker.sock:/var/run/docker.sock",
+        "worker-1-cache:/app/data/worker-cache",
+      ]
   worker-2:
     <<: *app
     user: root
@@ -68,47 +138,89 @@ services:
       <<: *settings
       STRATA_RPC_TARGET: rpc:50051
       STRATA_WORKER_ID: worker-2
-      STRATA_WORKER_CPU: '2'
-      STRATA_WORKER_MEMORY_MB: '1024'
-    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
+      STRATA_GPU_DISCOVERY_IMAGE: ${STRATA_WORKER_2_GPU_DISCOVERY_IMAGE:-}
+      STRATA_WORKER_CPU: "2"
+      STRATA_WORKER_MEMORY_MB: "1024"
+    volumes:
+      [
+        "/var/run/docker.sock:/var/run/docker.sock",
+        "worker-2-cache:/app/data/worker-cache",
+      ]
   worker-cpp:
-    build: {context: ., dockerfile: worker_cpp/Dockerfile}
+    build: { context: ., dockerfile: worker_cpp/Dockerfile }
     image: strata/worker-cpp:local
     restart: unless-stopped
     environment:
       STRATA_RPC_TARGET: rpc:50051
       STRATA_WORKER_ID: worker-cpp
+      STRATA_GPU_DISCOVERY_IMAGE: ${STRATA_CPP_GPU_DISCOVERY_IMAGE:-}
       STRATA_WORKER_TOKEN: ${STRATA_WORKER_TOKEN:-local-development-token}
-      STRATA_WORKER_CPU: '2'
-      STRATA_WORKER_MEMORY_MB: '1024'
-    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
+      STRATA_WORKER_CPU: "2"
+      STRATA_WORKER_MEMORY_MB: "1024"
+      STRATA_WORKER_CACHE_ROOT: /app/data/worker-cache
+      STRATA_WORKER_CACHE_BYTES: ${STRATA_WORKER_CACHE_BYTES:-4294967296}
+      STRATA_STORAGE_KEEPER_IMAGE: ${STRATA_STORAGE_KEEPER_IMAGE:-strata/control-plane:local}
+      STRATA_WORKER_OUTPUT_BYTES: ${STRATA_WORKER_OUTPUT_BYTES:-67108864}
+      STRATA_WORKER_OUTPUT_INODES: ${STRATA_WORKER_OUTPUT_INODES:-4096}
+    volumes:
+      [
+        "/var/run/docker.sock:/var/run/docker.sock",
+        "worker-cpp-cache:/app/data/worker-cache",
+      ]
     depends_on:
-      migrate: {condition: service_completed_successfully}
+      migrate: { condition: service_completed_successfully }
   python-workloads:
     build: workloads/python
     image: strata/python-workloads:local
     command: [python, -c, "print('Python workload image ready')"]
-    restart: 'no'
+    restart: "no"
   wave-workload:
     build: workloads/wave_solver
     image: strata/wave-solver:local
-    command: [/solver, --nx, '128', --steps, '100']
-    restart: 'no'
+    command: [/solver, --nx, "128", --steps, "100"]
+    restart: "no"
+  provisioner:
+    <<: *app
+    profiles: [elastic]
+    user: root
+    command: [strata-provisioner]
+    cpus: 0.25
+    mem_limit: 256m
+    environment:
+      <<: *settings
+      STRATA_POOL_ID: ${STRATA_POOL_ID:-local-cpu}
+      STRATA_POOL_IMAGE: ${STRATA_POOL_IMAGE:-}
+      STRATA_POOL_KIND: ${STRATA_POOL_KIND:-python}
+      STRATA_POOL_RPC_TARGET: rpc:50051
+      STRATA_POOL_NETWORK: ${STRATA_POOL_NETWORK:-strata_default}
+      STRATA_POOL_CPU_PER_WORKER: ${STRATA_POOL_CPU_PER_WORKER:-0.5}
+      STRATA_POOL_MEMORY_PER_WORKER_MB: ${STRATA_POOL_MEMORY_PER_WORKER_MB:-256}
+      STRATA_POOL_HOST_CPU_BUDGET: ${STRATA_POOL_HOST_CPU_BUDGET:-2}
+      STRATA_POOL_HOST_MEMORY_BUDGET_MB: ${STRATA_POOL_HOST_MEMORY_BUDGET_MB:-1024}
+      STRATA_POOL_MAXIMUM_WORKERS: ${STRATA_POOL_MAXIMUM_WORKERS:-2}
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
   prometheus:
     image: prom/prometheus:v3.2.1
     ports: ["127.0.0.1:9090:9090"]
-    volumes: ["./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
   grafana:
     image: grafana/grafana:11.6.0
     ports: ["127.0.0.1:3000:3000"]
-    environment: {GF_AUTH_ANONYMOUS_ENABLED: 'true', GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer}
+    environment:
+      { GF_AUTH_ANONYMOUS_ENABLED: "true", GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer }
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
   jaeger:
     image: jaegertracing/all-in-one:1.65.0
-    environment: {COLLECTOR_OTLP_ENABLED: 'true'}
+    environment: { COLLECTOR_OTLP_ENABLED: "true" }
     ports: ["127.0.0.1:16686:16686"]
 volumes:
   postgres-data:
   artifacts:
+  worker-1-cache:
+  worker-2-cache:
+  worker-cpp-cache:
+  backups:

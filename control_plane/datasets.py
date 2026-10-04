@@ -6,17 +6,21 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import Iterable
-from contextlib import suppress
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, NoReturn
 
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
-from control_plane.models import Dataset, DatasetFile, DatasetVersion, identifier
+from control_plane.access import actor_id, audit, project_id
+from control_plane.models import Dataset, DatasetFile, DatasetVersion, UploadSession, identifier
+from control_plane.quotas import storage_admission
 from control_plane.schemas import NamedResource
 from control_plane.services import DomainError, EngineService
+from control_plane.storage import BlobStore
 
 
 def storage_error(exc: OSError) -> NoReturn:
@@ -46,85 +50,124 @@ class DatasetService:
 
     def create(self, body: NamedResource) -> Dataset:
         with self.svc.factory.begin() as session:
-            row = Dataset(id=identifier(), **body.model_dump(), created_at=self.svc.now(session))
+            row = Dataset(
+                id=identifier(),
+                project_id=project_id(),
+                created_by=actor_id(),
+                **body.model_dump(),
+                created_at=self.svc.now(session),
+            )
             session.add(row)
+            audit(session, self.svc.now(session), "DATASET_CREATED", row.id, row.project_id)
             return row
 
     def version(self, dataset_id: str, label: str) -> DatasetVersion:
         with self.svc.factory.begin() as session:
-            if session.get(Dataset, dataset_id) is None:
+            dataset = session.get(Dataset, dataset_id)
+            if dataset is None:
                 raise DomainError(404, "dataset not found")
             row = DatasetVersion(
                 id=identifier(),
+                project_id=dataset.project_id,
                 dataset_id=dataset_id,
                 label=label,
                 status="DRAFT",
                 created_at=self.svc.now(session),
             )
             session.add(row)
+            audit(session, self.svc.now(session), "DATASET_VERSION_CREATED", row.id, row.project_id)
             return row
+
+    def validate_upload(self, version_id: str) -> None:
+        with self.svc.factory() as session:
+            version = session.get(DatasetVersion, version_id)
+            if version is None:
+                raise DomainError(404, "dataset version not found")
+            if version.status != "DRAFT":
+                raise DomainError(409, "sealed versions are immutable")
 
     def upload(self, version_id: str, name: str, chunks: Iterable[bytes]) -> DatasetFile:
         if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}", name):
             raise DomainError(422, "invalid file name; use a flat portable name")
-        root = self.svc.settings.artifact_root
-        temporary = root / f"upload-{identifier()}"
+        self.validate_upload(version_id)
+        store = BlobStore(self.svc.settings)
         digest, size = hashlib.sha256(), 0
         try:
-            root.mkdir(parents=True, exist_ok=True)
-            with temporary.open("wb") as output:
+            store.ensure_space()
+            with store.temporary("upload-") as temporary, temporary.open("wb") as output:
                 for chunk in chunks:
                     size += len(chunk)
                     if size > self.svc.settings.dataset_max_bytes:
                         raise DomainError(413, "dataset file exceeds configured limit")
                     digest.update(chunk)
-                    output.write(chunk)
-            sha = digest.hexdigest()
-            with self.svc.factory.begin() as session:
-                version = session.scalar(
-                    select(DatasetVersion).where(DatasetVersion.id == version_id).with_for_update()
-                )
-                if version is None:
-                    raise DomainError(404, "dataset version not found")
-                if version.status != "DRAFT":
-                    raise DomainError(409, "sealed versions are immutable")
-                existing = session.scalar(
-                    select(DatasetFile).where(
-                        DatasetFile.version_id == version_id, DatasetFile.name == name
-                    )
-                )
-                if existing:
-                    if existing.sha256 != sha:
-                        raise DomainError(409, "file name already contains different bytes")
-                    return existing
-                count = (
-                    session.scalar(
-                        select(func.count())
-                        .select_from(DatasetFile)
-                        .where(DatasetFile.version_id == version_id)
-                    )
-                    or 0
-                )
-                if count >= self.svc.settings.dataset_max_files:
-                    raise DomainError(413, "dataset file count limit reached")
-                path = root / sha
-                if not path.exists():
-                    temporary.replace(path)
-                row = DatasetFile(
-                    id=identifier(),
-                    version_id=version_id,
-                    name=name,
-                    sha256=sha,
-                    size=size,
-                    created_at=self.svc.now(session),
-                )
-                session.add(row)
-                return row
+                    with store.local_guard():
+                        store.ensure_space(len(chunk))
+                        output.write(chunk)
+                        output.flush()
+                output.close()
+                sha = digest.hexdigest()
+                with self.svc.factory.begin() as session:
+                    from control_plane.retention import storage_fence
+
+                    storage_fence(session)
+                    return self.commit_file(session, version_id, name, sha, size, temporary)
         except OSError as exc:
             storage_error(exc)
-        finally:
-            with suppress(FileNotFoundError):
-                temporary.unlink()
+
+    def commit_file(
+        self,
+        session: Session,
+        version_id: str,
+        name: str,
+        sha: str,
+        size: int,
+        source: Path,
+        reservation: str | None = None,
+    ) -> DatasetFile:
+        version = session.scalar(
+            select(DatasetVersion).where(DatasetVersion.id == version_id).with_for_update()
+        )
+        if version is None:
+            raise DomainError(404, "dataset version not found")
+        if version.status != "DRAFT":
+            raise DomainError(409, "sealed versions are immutable")
+        existing = session.scalar(
+            select(DatasetFile).where(
+                DatasetFile.version_id == version_id,
+                DatasetFile.name == name,
+            )
+        )
+        if existing:
+            if existing.sha256 != sha:
+                raise DomainError(409, "file name already contains different bytes")
+            return existing
+        count = (
+            session.scalar(
+                select(func.count())
+                .select_from(DatasetFile)
+                .where(
+                    DatasetFile.version_id == version_id,
+                )
+            )
+            or 0
+        )
+        if count >= self.svc.settings.dataset_max_files:
+            raise DomainError(413, "dataset file count limit reached")
+        now = self.svc.now(session)
+        storage_admission(session, version.project_id, size, now=now, exclude_upload=reservation)
+        BlobStore(self.svc.settings).put_file(sha, source)
+        row = DatasetFile(
+            id=identifier(),
+            project_id=version.project_id,
+            version_id=version_id,
+            name=name,
+            sha256=sha,
+            size=size,
+            created_at=now,
+        )
+        session.add(row)
+        audit(session, now, "DATASET_FILE_UPLOADED", row.id, row.project_id, size=size, sha256=sha)
+        return row
 
     def seal(self, version_id: str) -> DatasetVersion:
         with self.svc.factory.begin() as session:
@@ -133,6 +176,16 @@ class DatasetService:
             )
             if version is None:
                 raise DomainError(404, "dataset version not found")
+            if session.scalar(
+                select(UploadSession.id)
+                .where(
+                    UploadSession.version_id == version_id,
+                    UploadSession.status == "OPEN",
+                    UploadSession.expires_at > self.svc.now(session),
+                )
+                .limit(1)
+            ):
+                raise DomainError(409, "complete or cancel open uploads before sealing")
             files = list(
                 session.scalars(
                     select(DatasetFile)
@@ -147,6 +200,13 @@ class DatasetService:
                 json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
             version.status = "SEALED"
+            audit(
+                session,
+                self.svc.now(session),
+                "DATASET_VERSION_SEALED",
+                version.id,
+                version.project_id,
+            )
             return version
 
     def file(self, file_id: str) -> tuple[DatasetFile, Path]:
@@ -154,13 +214,23 @@ class DatasetService:
             row = session.get(DatasetFile, file_id)
             if row is None:
                 raise DomainError(404, "dataset file not found")
-            path = self.svc.settings.artifact_root / row.sha256
-            if not path.is_file():
-                raise DomainError(503, "dataset bytes are unavailable")
+            path = BlobStore(self.svc.settings).get_path(row.sha256, row.size)
             return row, path
 
     def preview(self, file_id: str, limit: int = 50) -> dict[str, Any]:
-        row, path = self.file(file_id)
+        with self.open_file(file_id) as (row, path):
+            return self.preview_path(row, path, limit)
+
+    @contextmanager
+    def open_file(self, file_id: str) -> Iterator[tuple[DatasetFile, Path]]:
+        with self.svc.factory() as session:
+            row = session.get(DatasetFile, file_id)
+            if row is None:
+                raise DomainError(404, "dataset file not found")
+        with BlobStore(self.svc.settings).materialized(row.sha256, row.size) as path:
+            yield row, path
+
+    def preview_path(self, row: DatasetFile, path: Path, limit: int) -> dict[str, Any]:
         if row.size > self.svc.settings.preview_max_bytes:
             raise DomainError(413, "preview limit exceeded; download or process in a job")
         try:

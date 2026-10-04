@@ -1,0 +1,11 @@
+kind: service
+service_port: 8080
+idle_seconds: 900
+job:
+  name: Private artifact service
+  image: strata/python-workloads:local
+  command:
+    [python, -m, http.server, "8080", --bind, 127.0.0.1, --directory, /output]
+  resources: { cpu: 0.5, memory_mb: 128 }
+  max_retries: 0
+  timeout_seconds: 3600

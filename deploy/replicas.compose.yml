@@ -1,0 +1,90 @@
+name: strata-replicas
+x-replica: &replica
+  image: ${STRATA_COORDINATOR_IMAGE:?Set the immutable coordinator image digest}
+  command: [strata-coordinator]
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  cpus: 1
+  mem_limit: 1g
+  pids_limit: 256
+  tmpfs: ["/tmp:size=128m,mode=1777"]
+  environment: &settings
+    STRATA_DATABASE_URL: ${STRATA_DATABASE_URL:?Set the verified PostgreSQL writer endpoint URL}
+    STRATA_PRODUCTION: "true"
+    STRATA_IDENTITY_ENABLED: "true"
+    STRATA_WORKER_TOKEN: ${STRATA_WORKER_TOKEN:?Set a private token of at least 32 characters}
+    STRATA_ALLOWED_IMAGES: ${STRATA_ALLOWED_IMAGES:?Set the approved immutable workload image list}
+    STRATA_API_BIND: 0.0.0.0
+    STRATA_RPC_BIND: 0.0.0.0:50051
+    STRATA_HEARTBEAT_INTERVAL: "3"
+    STRATA_WORKER_TIMEOUT: "60"
+    STRATA_LEASE_SECONDS: "90"
+    STRATA_TLS_CERT: /run/strata/rpc.pem
+    STRATA_TLS_KEY: /run/strata/rpc.key
+    STRATA_STORAGE_BACKEND: s3
+    STRATA_S3_BUCKET: ${STRATA_S3_BUCKET:?Set the shared private bucket}
+    STRATA_S3_PREFIX: ${STRATA_S3_PREFIX:-strata/blobs/}
+    STRATA_S3_ENDPOINT_URL: ${STRATA_S3_ENDPOINT_URL:?Set the verified HTTPS S3 endpoint}
+    STRATA_S3_REGION: ${STRATA_S3_REGION:-us-east-1}
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?Set the private S3 service credential}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?Set the private S3 secret}
+    AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+    STRATA_ARTIFACT_ROOT: /app/data/artifacts
+    STRATA_STORAGE_CACHE_BYTES: "536870912"
+    STRATA_STORAGE_MAX_LOCAL_BYTES: "1073741824"
+    STRATA_OIDC_ISSUER: ${STRATA_OIDC_ISSUER:-}
+    STRATA_OIDC_CLIENT_ID: ${STRATA_OIDC_CLIENT_ID:-}
+    STRATA_OIDC_CLIENT_SECRET: ${STRATA_OIDC_CLIENT_SECRET:-}
+    STRATA_OIDC_TOKEN_AUTH_METHOD: ${STRATA_OIDC_TOKEN_AUTH_METHOD:-none}
+    STRATA_OIDC_REDIRECT_URI: ${STRATA_OIDC_REDIRECT_URI:-}
+    STRATA_OIDC_STATE_ENCRYPTION_KEY: ${STRATA_OIDC_STATE_ENCRYPTION_KEY:-}
+    STRATA_OIDC_ALLOWED_ORIGINS: ${STRATA_OIDC_ALLOWED_ORIGINS:-[]}
+  volumes:
+    - ${STRATA_TLS_CERT_FILE:?Set the RPC certificate path}:/run/strata/rpc.pem:ro
+    - ${STRATA_TLS_KEY_FILE:?Set the RPC key path}:/run/strata/rpc.key:ro
+    - ${STRATA_DATABASE_CA_FILE:?Set the database CA path}:/run/strata/db-ca.pem:ro
+  networks: [control]
+services:
+  node-a:
+    <<: *replica
+    environment:
+      <<: *settings
+      STRATA_REPLICA_ID: node-a
+    volumes:
+      - cache-a:/app/data/artifacts
+      - ${STRATA_TLS_CERT_FILE:?Set the RPC certificate path}:/run/strata/rpc.pem:ro
+      - ${STRATA_TLS_KEY_FILE:?Set the RPC key path}:/run/strata/rpc.key:ro
+      - ${STRATA_DATABASE_CA_FILE:?Set the database CA path}:/run/strata/db-ca.pem:ro
+  node-b:
+    <<: *replica
+    environment:
+      <<: *settings
+      STRATA_REPLICA_ID: node-b
+    volumes:
+      - cache-b:/app/data/artifacts
+      - ${STRATA_TLS_CERT_FILE:?Set the RPC certificate path}:/run/strata/rpc.pem:ro
+      - ${STRATA_TLS_KEY_FILE:?Set the RPC key path}:/run/strata/rpc.key:ro
+      - ${STRATA_DATABASE_CA_FILE:?Set the database CA path}:/run/strata/db-ca.pem:ro
+  gateway:
+    image: ${STRATA_HA_GATEWAY_IMAGE:?Set the reviewed immutable HAProxy image}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 0.25
+    mem_limit: 128m
+    pids_limit: 64
+    tmpfs: ["/run:size=16m,mode=1777"]
+    ports:
+      - "127.0.0.1:${STRATA_API_PORT:-58010}:8080"
+      - "127.0.0.1:${STRATA_RPC_PORT:-58011}:50051"
+    volumes: ["./haproxy-replicas.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro"]
+    networks: [control]
+    depends_on: [node-a, node-b]
+networks:
+  control:
+volumes:
+  cache-a:
+  cache-b:

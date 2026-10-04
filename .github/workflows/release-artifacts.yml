@@ -1,0 +1,84 @@
+name: Release artifacts
+on: [workflow_dispatch]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          {
+            POSTGRES_DB: postgres,
+            POSTGRES_USER: strata,
+            POSTGRES_PASSWORD: strata,
+          }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U strata -d postgres"
+          --health-interval 2s --health-timeout 2s --health-retries 30
+    env:
+      STRATA_TEST_POSTGRES_URL: postgresql+psycopg://strata:strata@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with: { version: "0.9.18", python-version: "3.12" }
+      - name: Require a clean versioned source and successful CI for the exact commit
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          mkdir -p build/release
+          python -m scripts.release_preflight > build/release/ci-source.json
+      - run: uv sync --locked --extra analysis
+      - name: Build and validate the Python distributions
+        run: |
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          export SOURCE_DATE_EPOCH
+          uv build --out-dir build/release
+          uv build --out-dir build/rebuild
+          uv run --no-sync python -m scripts.check_reproducibility build/release build/rebuild
+          uv export --locked --no-dev --extra analysis --no-emit-project --quiet -o build/release/runtime-requirements.txt
+          uv run --no-sync python -m scripts.package_smoke --wheel build/release/*.whl \
+            --requirements build/release/runtime-requirements.txt --output build/installed
+          cp build/installed/evidence.json build/release/installation-evidence.json
+          uv tool run --from pip-audit==2.10.1 pip-audit -r build/release/runtime-requirements.txt \
+            --disable-pip --require-hashes --strict --progress-spinner off --format json -o build/release/python-audit.json
+          uv tool run --from pip-audit==2.10.1 pip-audit -r deploy/ha/requirements.txt \
+            --disable-pip --require-hashes --strict --progress-spinner off --format json -o build/release/patroni-audit.json
+      - name: Build versioned container archives
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" --label "org.opencontainers.image.version=$version" -t "strata/control-plane:$version" .
+          docker build -f worker_cpp/Dockerfile --label "org.opencontainers.image.revision=$GITHUB_SHA" --label "org.opencontainers.image.version=$version" -t "strata/worker-cpp:$version" .
+          docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" --label "org.opencontainers.image.version=$version" -t "strata/python-workloads:$version" workloads/python
+          docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" --label "org.opencontainers.image.version=$version" -t "strata/wave-solver:$version" workloads/wave_solver
+          docker build -f workloads/gpu/Dockerfile --label "org.opencontainers.image.revision=$GITHUB_SHA" --label "org.opencontainers.image.version=$version" -t "strata/gpu-smoke:$version" .
+          docker build -f deploy/ha/Dockerfile --label "org.opencontainers.image.revision=$GITHUB_SHA" --label "org.opencontainers.image.version=$version" -t "strata/postgres-ha:$version" .
+          docker build -f deploy/ha/gateway.Dockerfile --label "org.opencontainers.image.revision=$GITHUB_SHA" --label "org.opencontainers.image.version=$version" -t "strata/ha-gateway:$version" .
+          docker pull gcr.io/etcd-development/etcd:v3.6.15@sha256:5ed4e32061aa061f970d6500629213e8579ef17571dcf9789074966acb9afad1
+          uv run --no-sync python -m scripts.scan_images --output build/release --cache build/trivy-cache \
+            "strata/control-plane:$version" "strata/worker-cpp:$version" "strata/python-workloads:$version" \
+            "strata/wave-solver:$version" "strata/gpu-smoke:$version" "strata/postgres-ha:$version" \
+            "strata/ha-gateway:$version" gcr.io/etcd-development/etcd:v3.6.15
+          for image in control-plane worker-cpp python-workloads wave-solver gpu-smoke postgres-ha ha-gateway; do
+            docker save "strata/$image:$version" | gzip -n > "build/release/$image-$version-linux-amd64.tar.gz"
+          done
+          uv run --no-sync python -m scripts.artifact_manifest build/release
+      - name: Attest candidate artifact provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with: { subject-path: "${{ github.workspace }}/build/release/*" }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: strata-release-candidate
+          path: build/release/*
+          compression-level: 0
+          retention-days: 30

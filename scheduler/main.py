@@ -5,8 +5,10 @@ import threading
 from control_plane.config import Settings
 from control_plane.database import make_engine, sessions
 from control_plane.logging import configure_logging
+from control_plane.periodic import PeriodicService
 from control_plane.services import EngineService
 from control_plane.tracing import configure_tracing, tracer
+from control_plane.workflows import WorkflowService
 from scheduler.core import Scheduler
 
 
@@ -15,6 +17,8 @@ def main() -> None:
     configure_tracing("strata-scheduler")
     settings = Settings()
     scheduler = Scheduler(EngineService(sessions(make_engine(settings.database_url)), settings))
+    periodic = PeriodicService(scheduler.service)
+    workflows = WorkflowService(scheduler.service)
     stopped = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_: stopped.set())
@@ -22,6 +26,8 @@ def main() -> None:
         try:
             with tracer.start_as_current_span("scheduler.tick"):
                 scheduler.tick()
+                periodic.tick()
+                workflows.tick()
         except Exception:
             logging.getLogger(__name__).exception("scheduler_tick_failed")
         stopped.wait(settings.scheduler_interval)

@@ -1,0 +1,116 @@
+name: strata-postgres-ha-lab
+# Private single-host failure drill. Production needs separate failure domains and fencing.
+x-etcd: &etcd
+  image: gcr.io/etcd-development/etcd:v3.6.15@sha256:5ed4e32061aa061f970d6500629213e8579ef17571dcf9789074966acb9afad1
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  cpus: 0.25
+  mem_limit: 128m
+  pids_limit: 64
+  environment: &etcd-settings
+    ETCD_DATA_DIR: /etcd-data
+    ETCD_LISTEN_CLIENT_URLS: https://0.0.0.0:2379
+    ETCD_LISTEN_PEER_URLS: https://0.0.0.0:2380
+    ETCD_INITIAL_CLUSTER: etcd-a=https://etcd-a:2380,etcd-b=https://etcd-b:2380,etcd-c=https://etcd-c:2380
+    ETCD_INITIAL_CLUSTER_TOKEN: strata-private-ha-lab
+    ETCD_INITIAL_CLUSTER_STATE: new
+    ETCD_CLIENT_CERT_AUTH: "true"
+    ETCD_PEER_CLIENT_CERT_AUTH: "true"
+    ETCD_TRUSTED_CA_FILE: /run/strata/tls/ca.pem
+    ETCD_PEER_TRUSTED_CA_FILE: /run/strata/tls/ca.pem
+    ETCD_CERT_FILE: /run/strata/tls/server.pem
+    ETCD_KEY_FILE: /run/strata/tls/server.key
+    ETCD_PEER_CERT_FILE: /run/strata/tls/server.pem
+    ETCD_PEER_KEY_FILE: /run/strata/tls/server.key
+    ETCD_AUTO_COMPACTION_MODE: periodic
+    ETCD_AUTO_COMPACTION_RETENTION: 1h
+    ETCD_QUOTA_BACKEND_BYTES: "134217728"
+  networks: [database]
+x-postgres: &postgres
+  image: ${STRATA_POSTGRES_HA_IMAGE:?Set the reviewed immutable PostgreSQL/Patroni image}
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  cpus: 0.5
+  mem_limit: 512m
+  pids_limit: 128
+  tmpfs: ["/tmp:size=32m,mode=1777", "/var/run/postgresql:size=4m,mode=1777"]
+  networks: [database]
+services:
+  etcd-a:
+    <<: *etcd
+    environment:
+      <<: *etcd-settings
+      ETCD_NAME: etcd-a
+      ETCD_ADVERTISE_CLIENT_URLS: https://etcd-a:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: https://etcd-a:2380
+    volumes:
+      - etcd-a:/etcd-data
+      - ${STRATA_HA_CREDENTIAL_ROOT:?Set the generated lab credential directory}/tls/etcd-a:/run/strata/tls:ro
+  etcd-b:
+    <<: *etcd
+    environment:
+      <<: *etcd-settings
+      ETCD_NAME: etcd-b
+      ETCD_ADVERTISE_CLIENT_URLS: https://etcd-b:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: https://etcd-b:2380
+    volumes:
+      - etcd-b:/etcd-data
+      - ${STRATA_HA_CREDENTIAL_ROOT:?Set the generated lab credential directory}/tls/etcd-b:/run/strata/tls:ro
+  etcd-c:
+    <<: *etcd
+    environment:
+      <<: *etcd-settings
+      ETCD_NAME: etcd-c
+      ETCD_ADVERTISE_CLIENT_URLS: https://etcd-c:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: https://etcd-c:2380
+    volumes:
+      - etcd-c:/etcd-data
+      - ${STRATA_HA_CREDENTIAL_ROOT:?Set the generated lab credential directory}/tls/etcd-c:/run/strata/tls:ro
+  pg-a:
+    <<: *postgres
+    environment: { STRATA_PG_NODE: pg-a }
+    volumes:
+      - pg-a:/var/lib/postgresql/data
+      - ${STRATA_HA_CREDENTIAL_ROOT:?Set the generated lab credential directory}/secrets.json:/run/strata/secrets.json:ro
+      - ${STRATA_HA_CREDENTIAL_ROOT:?Set the generated lab credential directory}/tls/pg-a:/run/strata/tls:ro
+  pg-b:
+    <<: *postgres
+    environment: { STRATA_PG_NODE: pg-b }
+    volumes:
+      - pg-b:/var/lib/postgresql/data
+      - ${STRATA_HA_CREDENTIAL_ROOT:?Set the generated lab credential directory}/secrets.json:/run/strata/secrets.json:ro
+      - ${STRATA_HA_CREDENTIAL_ROOT:?Set the generated lab credential directory}/tls/pg-b:/run/strata/tls:ro
+  pg-c:
+    <<: *postgres
+    environment: { STRATA_PG_NODE: pg-c }
+    volumes:
+      - pg-c:/var/lib/postgresql/data
+      - ${STRATA_HA_CREDENTIAL_ROOT:?Set the generated lab credential directory}/secrets.json:/run/strata/secrets.json:ro
+      - ${STRATA_HA_CREDENTIAL_ROOT:?Set the generated lab credential directory}/tls/pg-c:/run/strata/tls:ro
+  postgres-writer:
+    image: ${STRATA_HA_GATEWAY_IMAGE:?Set the reviewed immutable HAProxy image}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 0.25
+    mem_limit: 128m
+    pids_limit: 64
+    ports: ["127.0.0.1:${STRATA_PG_WRITER_PORT:-55440}:5432"]
+    volumes:
+      - ./haproxy-postgres.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ${STRATA_HA_CREDENTIAL_ROOT:?Set the generated lab credential directory}/tls/gateway:/run/strata/tls:ro
+    networks: [database]
+networks:
+  database:
+volumes:
+  etcd-a:
+  etcd-b:
+  etcd-c:
+  pg-a:
+  pg-b:
+  pg-c:

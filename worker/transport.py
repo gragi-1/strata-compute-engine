@@ -11,7 +11,12 @@ from control_plane.rpc import engine_pb2_grpc as rpc
 
 class Transport:
     def __init__(self, target: str, token: str) -> None:
-        options = [("grpc.max_send_message_length", 17 * 1024 * 1024)]
+        options = [
+            ("grpc.max_send_message_length", 17 * 1024 * 1024),
+            ("grpc.initial_reconnect_backoff_ms", 200),
+            ("grpc.min_reconnect_backoff_ms", 1000),
+            ("grpc.max_reconnect_backoff_ms", 2000),
+        ]
         ca = os.getenv("STRATA_RPC_CA")
         self.channel = (
             grpc.secure_channel(

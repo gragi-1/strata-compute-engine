@@ -26,6 +26,7 @@ aside {
   flex-direction: column;
   position: fixed;
   inset: 0 auto 0 0;
+  overflow: auto;
 }
 .brand {
   font-size: 27px;
@@ -47,6 +48,8 @@ aside {
 nav {
   display: grid;
   gap: 7px;
+  min-height: 0;
+  overflow: auto;
 }
 button,
 input,
@@ -64,6 +67,16 @@ button {
 }
 button:hover {
   background: #e8eee9;
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+.table-wrap:focus-visible,
+summary:focus-visible {
+  outline: 3px solid #237fba;
+  outline-offset: 3px;
 }
 button:disabled {
   opacity: 0.5;
@@ -96,6 +109,7 @@ footer button {
   font-size: 12px;
 }
 main {
+  min-width: 0;
   margin-left: 228px;
   width: calc(100% - 228px);
   padding: 38px 44px;
@@ -108,7 +122,7 @@ header {
   margin-bottom: 30px;
 }
 .eyebrow {
-  color: #6d8476;
+  color: #53685b;
   margin: 0 0 12px;
 }
 h1 {
@@ -117,7 +131,7 @@ h1 {
   margin: 0;
 }
 #subtitle {
-  color: #728077;
+  color: #53685b;
   margin: 10px 0;
 }
 h2 {
@@ -145,7 +159,7 @@ h2 {
 }
 .muted,
 .card small {
-  color: #718175;
+  color: #53685b;
 }
 .panel {
   margin: 18px 0;
@@ -167,6 +181,7 @@ h2 {
 }
 .row-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
@@ -187,11 +202,12 @@ th {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 1px;
-  color: #718175;
+  color: #53685b;
 }
 td button {
   padding: 5px 9px;
   font-size: 12px;
+  white-space: nowrap;
 }
 .table-wrap {
   overflow: auto;
@@ -285,6 +301,16 @@ select {
   margin-top: 7px;
   background: #fafcf9;
 }
+label:has(input[type="checkbox"]) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+input[type="checkbox"] {
+  display: inline-block;
+  width: auto;
+  margin: 0;
+}
 textarea {
   min-height: 110px;
   resize: vertical;
@@ -311,7 +337,7 @@ svg {
 .empty {
   text-align: center;
   padding: 45px;
-  color: #718175;
+  color: #53685b;
 }
 .pagination {
   display: flex;
@@ -323,6 +349,22 @@ svg {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+.execution-summary {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.3fr) minmax(0, 1fr);
+  gap: 8px 16px;
+}
+.execution-summary dt {
+  font-weight: 600;
+}
+.execution-summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+details summary {
+  cursor: pointer;
+  padding: 10px 0;
 }
 @media (max-width: 900px) {
   aside {
@@ -366,7 +408,26 @@ svg {
   .panel {
     padding: 15px;
   }
+  table {
+    min-width: 520px;
+  }
   .spec {
     grid-template-columns: 1fr;
   }
+}
+[hidden] {
+  display: none !important;
+}
+.runtime-editor {
+  display: grid;
+  gap: 12px;
+  margin: 20px 0;
+}
+.runtime-editor label {
+  display: grid;
+  gap: 6px;
+}
+.runtime-editor textarea {
+  min-height: 100px;
+  font-family: monospace;
 }

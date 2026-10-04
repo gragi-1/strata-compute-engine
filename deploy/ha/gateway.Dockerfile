@@ -1,0 +1,4 @@
+FROM haproxy:3.2.25-alpine@sha256:5d97434a423c2533cfeb42874d45cf6d69a840b60334582dfbfd5008e94c80be
+USER root
+RUN apk upgrade --no-cache
+USER haproxy

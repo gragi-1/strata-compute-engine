@@ -11,6 +11,12 @@ from control_plane.models import Admission
 from control_plane.services import EngineService
 
 
+@pytest.fixture(autouse=True)
+def runtime_keeper_image(monkeypatch):
+    if os.getenv("STRATA_TEST_DOCKER_RUNTIME") == "1" and os.getenv("STRATA_TEST_CONTROL_IMAGE"):
+        monkeypatch.setenv("STRATA_STORAGE_KEEPER_IMAGE", os.environ["STRATA_TEST_CONTROL_IMAGE"])
+
+
 class Clock:
     def __init__(self):
         self.value = datetime(2026, 10, 2, tzinfo=UTC)

@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import DateTime, Engine, create_engine, event
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.types import TypeDecorator
 
@@ -27,7 +28,17 @@ class UTCDateTime(TypeDecorator[datetime]):
 
 
 def make_engine(url: str) -> Engine:
-    engine = create_engine(url, pool_pre_ping=True)
+    address = make_url(url)
+    options: dict[str, Any] = {"pool_pre_ping": True, "hide_parameters": True}
+    if address.get_backend_name() == "postgresql":
+        # A peer accepting TCP without completing the handshake must not hang a replica.
+        # Preserve operator-supplied libpq parameters, including per-host connect_timeout.
+        if "connect_timeout" not in address.query:
+            address = address.update_query_dict({"connect_timeout": "5"})
+        if "target_session_attrs" not in address.query:
+            address = address.update_query_dict({"target_session_attrs": "read-write"})
+        options["pool_timeout"] = 10
+    engine = create_engine(address, **options)
     if engine.dialect.name == "sqlite":
 
         @event.listens_for(engine, "connect")

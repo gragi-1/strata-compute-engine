@@ -1,16 +1,16 @@
 import csv
 import io
-import tempfile
-from typing import Annotated, Any
+from typing import Annotated, Any, BinaryIO, cast
 
 from fastapi import APIRouter, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
+from control_plane.analytics import DatasetAnalytics, DatasetQuery
 from control_plane.campaigns import CampaignService
 from control_plane.datasets import DatasetService, storage_error
-from control_plane.models import Campaign, Dataset, DatasetFile, DatasetVersion
+from control_plane.models import Campaign, Dataset, DatasetFile, DatasetVersion, WorkflowExpansion
 from control_plane.schemas import (
     CampaignSubmit,
     JobView,
@@ -19,6 +19,8 @@ from control_plane.schemas import (
     WorkflowSubmit,
 )
 from control_plane.services import DomainError, EngineService
+from control_plane.storage import BlobStore
+from control_plane.storage_http import BlobResponse
 
 
 def resource_router(svc: EngineService) -> APIRouter:
@@ -26,6 +28,20 @@ def resource_router(svc: EngineService) -> APIRouter:
 
     router = APIRouter()
     datasets, campaigns = DatasetService(svc), CampaignService(svc)
+    analytics = DatasetAnalytics(svc)
+
+    @router.get("/campaigns/{campaign_id}/expansions")
+    def expansions(campaign_id: str) -> list[dict[str, Any]]:
+        campaigns.get(campaign_id)
+        with svc.factory() as session:
+            return [
+                row_view(row)
+                for row in session.scalars(
+                    select(WorkflowExpansion)
+                    .where(WorkflowExpansion.campaign_id == campaign_id)
+                    .order_by(WorkflowExpansion.name)
+                )
+            ]
 
     @router.post("/datasets", status_code=201)
     def create_dataset(body: NamedResource) -> dict[str, Any]:
@@ -68,17 +84,20 @@ def resource_router(svc: EngineService) -> APIRouter:
     @router.put("/dataset-versions/{version_id}/files/{name}", status_code=201)
     async def upload(version_id: str, name: str, request: Request) -> dict[str, Any]:
         # Raw streaming body avoids multipart spooling or loading an entire dataset into memory.
+        datasets.validate_upload(version_id)
+        from starlette.concurrency import run_in_threadpool
+
+        store = BlobStore(svc.settings)
+        await run_in_threadpool(store.ensure_space)
         try:
-            with tempfile.TemporaryFile() as stream:
+            with store.temporary("http-") as path, path.open("w+b") as stream:
                 size = 0
                 async for chunk in request.stream():
                     size += len(chunk)
                     if size > svc.settings.dataset_max_bytes:
                         raise DomainError(413, "dataset file exceeds configured limit")
-                    stream.write(chunk)
+                    await run_in_threadpool(store.write, cast(BinaryIO, stream), chunk)
                 stream.seek(0)
-                from starlette.concurrency import run_in_threadpool
-
                 row = await run_in_threadpool(
                     datasets.upload, version_id, name, iter(lambda: stream.read(1024 * 1024), b"")
                 )
@@ -114,9 +133,20 @@ def resource_router(svc: EngineService) -> APIRouter:
         return JSONResponse(jsonable_encoder(datasets.preview(file_id, limit)))
 
     @router.get("/dataset-files/{file_id}")
-    def download(file_id: str) -> FileResponse:
-        row, path = datasets.file(file_id)
-        return FileResponse(path, filename=row.name, headers={"ETag": f'"{row.sha256}"'})
+    def download(file_id: str) -> BlobResponse:
+        with svc.factory() as session:
+            row = session.get(DatasetFile, file_id)
+            if row is None:
+                raise DomainError(404, "dataset file not found")
+        return BlobResponse(BlobStore(svc.settings), row.sha256, row.size, row.name)
+
+    @router.post("/dataset-files/{file_id}/query")
+    def query_dataset(file_id: str, body: DatasetQuery) -> JSONResponse:
+        return JSONResponse(jsonable_encoder(analytics.query(file_id, body)))
+
+    @router.post("/dataset-files/{file_id}/statistics")
+    def dataset_statistics(file_id: str, body: DatasetQuery) -> JSONResponse:
+        return JSONResponse(jsonable_encoder(analytics.statistics(file_id, body)))
 
     @router.post("/campaigns", status_code=201)
     def create_campaign(

@@ -1,22 +1,38 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
 name = "strata-compute-engine"
-version = "2.0.0"
+version = "3.0.0"
 description = "Durable, lease-based distributed execution of containerized compute workloads"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
-  "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "pydantic-settings>=2.7,<3",
-  "sqlalchemy>=2.0.38,<2.1", "psycopg[binary]>=3.2,<4", "alembic>=1.14,<2",
-  "httpx>=0.28,<1", "docker>=7.1,<8", "prometheus-client>=0.21,<1",
-  "typer>=0.15,<1", "pyyaml>=6.0,<7",
-  "grpcio>=1.81.1,<2", "protobuf>=6.33.5,<7",
-  "opentelemetry-sdk>=1.30,<2", "opentelemetry-exporter-otlp-proto-grpc>=1.30,<2",
-  "numpy>=2.3,<3", "pyarrow>=19,<24",
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.34,<1",
+  "pydantic-settings>=2.7,<3",
+  "sqlalchemy>=2.0.38,<2.1",
+  "psycopg[binary]>=3.2,<4",
+  "alembic>=1.14,<2",
+  "httpx>=0.28,<1",
+  "docker>=7.1,<8",
+  "prometheus-client>=0.21,<1",
+  "typer>=0.15,<1",
+  "pyyaml>=6.0,<7",
+  "grpcio>=1.81.1,<2",
+  "protobuf>=6.33.5,<7",
+  "opentelemetry-sdk>=1.30,<2",
+  "opentelemetry-exporter-otlp-proto-grpc>=1.30,<2",
+  "numpy>=2.3,<3",
+  "pyarrow>=19,<24",
+  "argon2-cffi>=23.1,<26",
+  "boto3>=1.40,<2",
+  "pyjwt[crypto]>=2.10,<3",
+  "cryptography>=50,<51",
+  "duckdb>=1.3,<2",
+  "croniter>=6,<7",
 ]
 
 [project.optional-dependencies]
@@ -32,7 +48,7 @@ dev = [
     "pre-commit>=4,<5",
     "grpcio-tools>=1.70,<2",
     "pillow>=11.3,<13",
-    "cryptography>=45,<48",
+    "types-croniter>=6.2.4.20260711",
 ]
 
 [project.scripts]
@@ -41,9 +57,22 @@ strata-scheduler = "scheduler.main:main"
 strata-worker = "worker.agent:main"
 strata-rpc = "control_plane.rpc.server:main"
 strata-admin = "control_plane.maintenance:app"
+strata-events = "control_plane.webhooks:main"
+strata-ops = "control_plane.operations:main"
+strata-reaper = "worker.reaper:app"
+strata-provisioner = "control_plane.provisioning:main"
+strata-coordinator = "control_plane.coordinator:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["control_plane", "scheduler", "worker", "cli", "strata_sdk"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"migrations/env.py" = "control_plane/_migrations/env.py"
+"migrations/script.py.mako" = "control_plane/_migrations/script.py.mako"
+"migrations/versions" = "control_plane/_migrations/versions"
+
+[tool.hatch.build.targets.sdist]
+include = ["control_plane", "scheduler", "worker", "cli", "strata_sdk", "migrations", "proto", "worker_cpp", "workloads", "examples", "scripts", "tests", "deploy", "docs", "observability", "pyproject.toml", "uv.lock", "alembic.ini", "Dockerfile", "docker-compose.yml", "README.md", "LICENSE"]
 
 [tool.ruff]
 target-version = "py312"
@@ -59,7 +88,7 @@ strict = true
 files = ["control_plane", "scheduler", "worker", "cli", "strata_sdk"]
 exclude = ["engine_pb2.py", "engine_pb2_grpc.py"]
 [[tool.mypy.overrides]]
-module = ["docker", "docker.*", "grpc", "grpc.*", "pyarrow", "pyarrow.*"]
+module = ["docker", "docker.*", "grpc", "grpc.*", "pyarrow", "pyarrow.*", "boto3", "boto3.*", "botocore", "botocore.*"]
 ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["control_plane.rpc.engine_pb2", "control_plane.rpc.engine_pb2_grpc"]
@@ -69,7 +98,7 @@ follow_imports = "skip"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
-markers = ["postgres: requires STRATA_TEST_POSTGRES_URL", "docker: requires a running Docker daemon"]
+markers = ["postgres: requires STRATA_TEST_POSTGRES_URL", "docker: requires a running Docker daemon", "gpu: requires an actual NVIDIA GPU runtime"]
 
 [tool.coverage.run]
 source = ["control_plane", "scheduler"]

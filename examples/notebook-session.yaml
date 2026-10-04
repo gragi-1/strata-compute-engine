@@ -1,0 +1,9 @@
+kind: python
+idle_seconds: 900
+job:
+  name: Numerical notebook
+  image: strata/python-workloads:local
+  command: [python, -c, pass]
+  resources: { cpu: 0.5, memory_mb: 256 }
+  max_retries: 0
+  timeout_seconds: 3600

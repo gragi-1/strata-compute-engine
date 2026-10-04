@@ -39,6 +39,7 @@ def test_real_grpc_protocol_auth_leases_results(service):
             ),
         )
         transport.session_id = registered.session_id
+        assert transport.call("Cluster", pb.Empty()).cluster_id == registered.cluster_id
         job = submit(service)
         Scheduler(service).schedule()
         poll = transport.call(
@@ -47,6 +48,10 @@ def test_real_grpc_protocol_auth_leases_results(service):
         a = poll.assignments[0]
         assert a.job_id == job.id
         credentials = transport.credentials(a)
+        orphan = pb.OrphanRequest(
+            candidates=[pb.OrphanCandidate(worker_id="worker", attempt_id=a.attempt_id)]
+        )
+        assert not transport.call("InspectOrphans", orphan).decisions[0].remove
         transport.call("Start", credentials)
         heart = transport.call(
             "Heartbeat",
@@ -75,6 +80,7 @@ def test_real_grpc_protocol_auth_leases_results(service):
             pb.CompleteRequest(credentials=credentials, outcome=pb.SUCCEEDED, exit_code=0),
         )
         assert service.get_job(job.id).status == "SUCCEEDED"
+        assert transport.call("InspectOrphans", orphan).decisions[0].remove
     finally:
         transport.channel.close()
         server.stop(0).wait()

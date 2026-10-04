@@ -1,0 +1,70 @@
+scope: strata-postgres
+namespace: /strata/
+bootstrap:
+  dcs:
+    ttl: 20
+    loop_wait: 2
+    retry_timeout: 3
+    maximum_lag_on_failover: 1048576
+    check_timeline: true
+    synchronous_mode: "on"
+    synchronous_mode_strict: true
+    synchronous_node_count: 1
+    failsafe_mode: false
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        wal_level: replica
+        wal_log_hints: "on"
+        synchronous_commit: "on"
+        max_connections: 100
+        max_wal_senders: 10
+        max_replication_slots: 10
+        shared_buffers: 64MB
+        wal_keep_size: 128MB
+        password_encryption: scram-sha-256
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+  post_bootstrap: /opt/strata-ha/venv/bin/python /opt/strata-ha/bootstrap.py
+postgresql:
+  listen: 0.0.0.0:5432
+  data_dir: /var/lib/postgresql/data/pgdata
+  bin_dir: /usr/local/pgsql/bin
+  pgpass: /tmp/strata-ha/pgpass
+  authentication:
+    superuser:
+      username: postgres
+    replication:
+      username: replicator
+      sslmode: verify-full
+  parameters:
+    ssl: "on"
+    ssl_cert_file: /tmp/strata-ha/server.pem
+    ssl_key_file: /tmp/strata-ha/server.key
+    ssl_ca_file: /tmp/strata-ha/ca.pem
+    statement_timeout: 30000
+    idle_in_transaction_session_timeout: 30000
+    tcp_keepalives_idle: 10
+    tcp_keepalives_interval: 3
+    tcp_keepalives_count: 3
+  pg_hba:
+    - local all all peer
+    - hostssl replication replicator all scram-sha-256
+    - hostssl all all all scram-sha-256
+    - host all all all reject
+restapi:
+  listen: 0.0.0.0:8008
+  certfile: /tmp/strata-ha/server.pem
+  keyfile: /tmp/strata-ha/server.key
+  cafile: /tmp/strata-ha/ca.pem
+  verify_client: required
+etcd3:
+  hosts: etcd-a:2379,etcd-b:2379,etcd-c:2379
+  protocol: https
+  cacert: /tmp/strata-ha/ca.pem
+  cert: /tmp/strata-ha/client.pem
+  key: /tmp/strata-ha/client.key
+watchdog:
+  mode: off

@@ -54,3 +54,7 @@ def retry_delay(attempt: int, base: float, cap: float, jitter: float) -> float:
 
 def fits(cpu: float, memory: int, free_cpu: float, free_memory: int) -> bool:
     return cpu <= free_cpu + 1e-9 and memory <= free_memory
+
+
+def execution_overhead(capabilities: list[str]) -> tuple[float, int]:
+    return (0.01, 32) if "bounded-output" in capabilities else (0.0, 0)

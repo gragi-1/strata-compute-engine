@@ -11,8 +11,8 @@ Jobs request CPU and memory; workers advertise logical budgets. Multiple workers
 Use a dedicated coordinator host and Docker execution hosts. Register one appropriately sized worker per physical host, or partition the host budget explicitly. Both agent implementations connect outbound to the coordinator; the coordinator does not open connections to worker machines.
 
 1. Build and publish the control-plane/worker images to your own registry. Record immutable image digests. Prepare each workload image and preload the same allowlisted digests on every execution host. `docker compose up` in the development repository builds local images; the remote worker file intentionally does not build or pull arbitrary workload images on demand.
-2. Provision PostgreSQL and durable blob storage with monitoring and backups. The supplied backend uses a filesystem shared by the API and RPC services. Do not place a second coordinator on an unrelated filesystem and expect artifacts to be shared.
-3. Create strong URL-safe database and worker credentials and API role keys. Keep them in protected configuration outside Git. The database password variable only initializes a new PostgreSQL volume; it does not rotate an existing database's password. Use a fresh dedicated deployment or explicitly rotate the database role through PostgreSQL administration.
+2. Provision PostgreSQL and durable blob storage with monitoring and backups. Choose the [filesystem or S3-compatible backend](object-storage.md). API/RPC replicas must share the same durable objects; separate coordinator filesystems do not provide shared storage. Follow [the replica deployment guide](high-availability.md) for its storage and database requirements.
+3. Create strong URL-safe database and worker credentials. Configure [individual accounts and projects](identity-and-projects.md) for a shared workspace, or API role keys for the documented legacy trusted deployment. Keep secrets in protected configuration outside Git. The database password variable only initializes a new PostgreSQL volume; it does not rotate an existing database's password. Use a fresh dedicated deployment or explicitly rotate the database role through PostgreSQL administration.
 4. Issue an RPC server certificate whose SANs include the coordinator hostname and `rpc` (for local Compose workers). Supply its certificate/key to the coordinator and only the trusted CA certificate to workers. Python and C++ use verified TLS; hostname verification stays enabled.
 5. Configure HTTPS for REST. `deploy/Caddyfile` is a reverse-proxy template for Caddy on the coordinator host, forwarding to loopback port 8000. Configure `STRATA_DOMAIN` and your normal certificate/DNS process. The proxy hides operational `/metrics` and internal tick endpoints. Keep Grafana, Prometheus, Jaeger and PostgreSQL private.
 6. Restrict TCP 50052 to the trusted worker network. Configure the coordinator with `deploy/tls.compose.yml` and the workers with `deploy/worker.compose.yml`. These templates are saved for review; no public service or cloud account has been created by this expansion.
@@ -41,6 +41,7 @@ Each execution host uses:
 
 ```text
 STRATA_WORKER_IMAGE=registry.example.org/project/worker@sha256:IMMUTABLE_DIGEST
+STRATA_STORAGE_KEEPER_IMAGE=registry.example.org/project/control-plane@sha256:REVIEWED_DIGEST
 STRATA_RPC_TARGET=coordinator_hostname:50052
 STRATA_WORKER_ID=unique_host_worker_id
 STRATA_WORKER_TOKEN=the_private_worker_token
@@ -61,7 +62,7 @@ Choose the published Python or C++ worker image. The remote template specifies `
 
 Drain a worker before planned maintenance. Existing executions finish, while the scheduler routes new jobs elsewhere. Stop the drained worker only once its active job count is zero. A replacement must use a unique ID or wait for the previous session to expire. Changing credentials requires restarting the affected service.
 
-`strata-admin backup`, `verify-backup`, `restore` and `storage-audit` are documented in [the workspace guide](platform.md). Test restores on a separate empty database, not on a live coordinator. Keep backups off the execution host and protect them as private data. The provided restore command refuses existing data; it does not implement failover or replicate PostgreSQL.
+`strata-admin backup`, `verify-backup`, `restore` and `storage-audit` are documented in [the workspace guide](platform.md). Test restores on a separate empty database, not on a live coordinator. Keep backups off the execution host and protect them as private data. The restore command refuses existing data. Configure [supervised backups/restore drills](continuous-operations.md) and the separate [replica/database recovery deployment](high-availability.md) when required.
 
 ## Finding the useful limit
 

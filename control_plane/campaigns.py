@@ -9,10 +9,41 @@ from typing import Any
 
 from sqlalchemy import func, select
 
+from control_plane.access import actor_id, audit, project_id, scoped_key
 from control_plane.domain import TERMINAL, JobStatus
-from control_plane.models import Admission, Artifact, Attempt, Campaign, Job, identifier
+from control_plane.models import (
+    Admission,
+    Artifact,
+    Attempt,
+    Campaign,
+    Job,
+    WorkflowExpansion,
+    identifier,
+)
 from control_plane.schemas import CampaignSubmit, JobSubmit, WorkflowSubmit
 from control_plane.services import DomainError, EngineService
+
+
+def request_digest(body: CampaignSubmit | WorkflowSubmit) -> str:
+    # Strip only additive defaults so existing v2 idempotency keys still replay.
+    value = body.model_dump()
+    if value.get("expansions") == {}:
+        value.pop("expansions")
+    nodes = [value["template"]] if "template" in value else list(value["nodes"].values())
+    for node in nodes:
+        for field in ("gpus", "gpu_memory_mb"):
+            if node["resources"].get(field) == 0:
+                node["resources"].pop(field)
+        if node["expected_image_digest"] is None:
+            node.pop("expected_image_digest")
+        if node["dependency_policy"] == "all_succeeded":
+            node.pop("dependency_policy")
+        for item in node["artifact_inputs"]:
+            if item["artifact_id"] is None:
+                item.pop("artifact_id")
+    return hashlib.sha256(
+        json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
 
 
 class CampaignService:
@@ -22,10 +53,11 @@ class CampaignService:
     def create(self, body: CampaignSubmit, key: str | None) -> tuple[Campaign, bool]:
         if key is not None and not 1 <= len(key) <= 256:
             raise DomainError(422, "idempotency key must contain 1..256 characters")
+        key = scoped_key(key)
         count = math.prod(len(v) for v in body.matrix.values()) * body.repeats
         if count > self.svc.settings.campaign_max_jobs:
             raise DomainError(413, "campaign exceeds configured job limit")
-        digest = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
+        digest = request_digest(body)
         with self.svc.factory.begin() as session:
             session.execute(select(Admission).where(Admission.id == 1).with_for_update()).one()
             if key:
@@ -34,16 +66,11 @@ class CampaignService:
                     if existing.request_hash != digest:
                         raise DomainError(409, "idempotency key was used with a different campaign")
                     return existing, False
-            depth = (
-                session.scalar(
-                    select(func.count()).select_from(Job).where(Job.status.not_in(TERMINAL))
-                )
-                or 0
-            )
-            if depth + count > self.svc.settings.queue_limit:
-                raise DomainError(429, "campaign exceeds outstanding job capacity")
+            self.svc.admission(session, count)
             row = Campaign(
                 id=identifier(),
+                project_id=project_id(),
+                created_by=actor_id(),
                 name=body.name,
                 description=body.description,
                 specification=body.model_dump(),
@@ -53,6 +80,7 @@ class CampaignService:
             )
             session.add(row)
             session.flush()
+            audit(session, self.svc.now(session), "CAMPAIGN_CREATED", row.id, row.project_id)
             keys = list(body.matrix)
             for values in itertools.product(*body.matrix.values()):
                 for repeat in range(body.repeats):
@@ -117,10 +145,18 @@ class CampaignService:
 
         if key is not None and not 1 <= len(key) <= 256:
             raise DomainError(422, "invalid idempotency key")
+        key = scoped_key(key)
         graph = {
-            name: set(node.depends_on) | {i.job_id for i in node.artifact_inputs}
+            name: set(node.depends_on)
+            | {i.job_id for i in node.artifact_inputs if not i.artifact_id}
             for name, node in body.nodes.items()
         }
+        if set(body.nodes) & set(body.expansions):
+            raise DomainError(422, "workflow node and expansion names must be distinct")
+        for name, expansion in body.expansions.items():
+            if expansion.source not in body.nodes:
+                raise DomainError(422, "expansion source must be a container node")
+            graph[name] = {expansion.source}
         if any(not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_-]{0,63}", name) for name in graph):
             raise DomainError(422, "invalid workflow node name")
         if any(parent not in graph for parents in graph.values() for parent in parents):
@@ -129,7 +165,9 @@ class CampaignService:
             order = list(TopologicalSorter(graph).static_order())
         except CycleError as exc:
             raise DomainError(422, "workflow contains a cycle") from exc
-        digest = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
+        if len(order) > self.svc.settings.campaign_max_jobs:
+            raise DomainError(413, "workflow exceeds configured total job limit")
+        digest = request_digest(body)
         with self.svc.factory.begin() as session:
             session.execute(select(Admission).where(Admission.id == 1).with_for_update()).one()
             existing = (
@@ -141,16 +179,11 @@ class CampaignService:
                 if existing.request_hash != digest:
                     raise DomainError(409, "idempotency key was used with a different workflow")
                 return existing, False
-            depth = (
-                session.scalar(
-                    select(func.count()).select_from(Job).where(Job.status.not_in(TERMINAL))
-                )
-                or 0
-            )
-            if depth + len(order) > self.svc.settings.queue_limit:
-                raise DomainError(429, "workflow exceeds outstanding job capacity")
+            self.svc.admission(session, len(order))
             row = Campaign(
                 id=identifier(),
+                project_id=project_id(),
+                created_by=actor_id(),
                 name=body.name,
                 description=body.description,
                 specification=body.model_dump(),
@@ -160,12 +193,20 @@ class CampaignService:
             )
             session.add(row)
             session.flush()
+            audit(session, self.svc.now(session), "WORKFLOW_CREATED", row.id, row.project_id)
             ids: dict[str, str] = {}
             for name in order:
-                specification = body.nodes[name].model_dump()
+                if name in body.expansions:
+                    expansion = body.expansions[name]
+                    specification = expansion.template.model_dump()
+                    specification["name"] = f"{body.name[:60]}-{name}-join"
+                    specification["command"] = ["barrier"]
+                else:
+                    specification = body.nodes[name].model_dump()
                 specification["depends_on"] = [ids[parent] for parent in graph[name]]
                 for item in specification["artifact_inputs"]:
-                    item["job_id"] = ids[item["job_id"]]
+                    if not item["artifact_id"]:
+                        item["job_id"] = ids[item["job_id"]]
                 job = self.svc.create_job(
                     session,
                     JobSubmit.model_validate(specification),
@@ -175,6 +216,27 @@ class CampaignService:
                     {"node": name},
                 )
                 ids[name] = job.id
+                if name in body.expansions:
+                    job.execution_kind = "barrier"
+                    expansion = body.expansions[name]
+                    session.add(
+                        WorkflowExpansion(
+                            id=identifier(),
+                            project_id=project_id(),
+                            created_by=actor_id(),
+                            campaign_id=row.id,
+                            source_job_id=ids[expansion.source],
+                            gate_job_id=job.id,
+                            name=name,
+                            artifact_name=expansion.artifact,
+                            template=expansion.template.model_dump(exclude_none=True),
+                            max_jobs=expansion.max_jobs,
+                            status="WAITING",
+                            generated_count=0,
+                            next_check_at=self.svc.now(session),
+                            created_at=self.svc.now(session),
+                        )
+                    )
             return row, True
 
     def jobs(self, campaign_id: str, limit: int = 100, offset: int = 0) -> list[Job]:
@@ -208,19 +270,15 @@ class CampaignService:
                     .with_for_update()
                 )
             )
-            depth = (
-                session.scalar(
-                    select(func.count()).select_from(Job).where(Job.status.not_in(TERMINAL))
-                )
-                or 0
-            )
-            if depth + len(jobs) > self.svc.settings.queue_limit:
-                raise DomainError(429, "campaign retry exceeds outstanding job capacity")
+            self.svc.admission(session, len(jobs))
             now = self.svc.now(session)
             for job in jobs:
                 job.retry_count = 0
                 job.eligible_at = now
                 job.started_at = job.scheduled_at = job.finished_at = None
+                from control_plane.workflows import reset_barrier
+
+                reset_barrier(session, job, now)
                 self.svc.transition(session, job, JobStatus.QUEUED, now, manual=1)
             # All predecessor/dependant statuses become visible in the same commit.
             return len(jobs)
@@ -254,10 +312,13 @@ class CampaignService:
                         )
                     )
                     if artifact and artifact.size <= 1024 * 1024:
+                        from control_plane.storage import BlobStore
+
                         try:
-                            value = json.loads(
-                                (self.svc.settings.artifact_root / artifact.sha256).read_bytes()
-                            )
+                            with BlobStore(self.svc.settings).materialized(
+                                artifact.sha256, artifact.size
+                            ) as path:
+                                value = json.loads(path.read_bytes())
                             if isinstance(value, dict):
                                 for k, v in value.items():
                                     if isinstance(v, (str, int, float, bool)) or v is None:
@@ -266,7 +327,7 @@ class CampaignService:
                                             if isinstance(v, float) and not math.isfinite(v)
                                             else v
                                         )
-                        except (OSError, ValueError):
+                        except (OSError, ValueError, DomainError):
                             result["result_error"] = "result.json is unavailable or invalid"
             rows.append(result)
         return rows

@@ -4,13 +4,17 @@
 
 A compute workspace for running containerized programs, organizing datasets, executing parameter sweeps and dependency workflows, and collecting reproducible results. Durable scheduling and recovery are backed by PostgreSQL and fenced leases; Python and C++ worker agents execute the jobs.
 
-**The v2 workspace has been validated locally.** Consult [release history](https://github.com/gragi-1/strata-compute-engine/releases) for published versions; the CI badge reflects pushed commits. See [v2 validation](docs/validation-v2.md) for the evidence and its limits.
+**Strata v3.0.0 is prepared for publication as a self-hosted compute workspace.** Its implementation has passed [local validation](docs/validation-v3.md); publication still requires successful CI and candidate provenance for the release commit. Consult [release history](https://github.com/gragi-1/strata-compute-engine/releases) for published versions; the CI badge reflects pushed commits. Historical [v2 validation](docs/validation-v2.md) remains available.
+
+The prepared **v3 self-hosted release** is tracked in the [acceptance ledger](docs/product-plan.md). Its implemented paths include [individual identity and projects](docs/identity-and-projects.md), [federated sign-in](docs/federated-identity.md), [S3-compatible storage](docs/object-storage.md), [resumable dataset uploads](docs/resumable-uploads.md), [large dataset exploration](docs/dataset-exploration.md), [retention and caches](docs/storage-retention.md), [reproducible experiments](docs/experiments.md), [periodic jobs and conditions](docs/periodic-jobs-and-conditions.md), [dynamic workflows](docs/dynamic-workflows.md), [signed event delivery](docs/webhooks.md), [supervised operations](docs/continuous-operations.md), [cluster maintenance](docs/cluster-maintenance.md), [elastic worker pools](docs/elastic-worker-pools.md), [replica and database recovery](docs/high-availability.md), [live logs](docs/live-logs.md), [GPU execution](docs/gpu-execution.md), [installable distributions and upgrades](docs/distribution-and-upgrades.md) and [security verification](docs/security-verification.md). The local results remain separate from published v2 evidence; follow the publication procedure before claiming a released v3 build.
 
 ![Strata compute workspace](docs/demo/compute-workspace.png)
 
-Use Strata when you have many independent computations, data-processing stages or experiments to run and want a queue, bounded execution, a durable history and a common place for inputs and outputs. It runs finite CPU programs packaged in approved Docker images. Your program supplies the computation; Strata supplies its execution and organization.
+Use Strata when you have computations, data-processing stages or experiments to run and want a queue, bounded execution, durable history and a common place for inputs and outputs. It runs CPU/GPU programs packaged in approved Docker images. [Managed runtimes](docs/managed-runtimes.md) add atomic cooperating groups, a stateful Python notebook with `.ipynb` export and a bounded proxy for container-local HTTP services. Your program supplies the computation; Strata supplies its execution and organization.
 
-Start with [the workspace guide](docs/platform.md), [network deployment](docs/deployment.md) and [security boundaries](docs/security.md).
+Start with [the workspace guide](docs/platform.md), [network deployment](docs/deployment.md) and [security boundaries](docs/security.md). The [v3 local validation report](docs/validation-v3.md) records the integrated hardware/service profile, verified load results, browser coverage and clean installation, with their scope and limits. The [reliability guide](docs/reliability-validation.md) explains how to repeat those checks.
+
+The package and native build versions are `3.0.0`; this release has not been published by the local preparation. Follow [the v3 publication procedure](docs/publishing-v3.md) for source review, exact-commit CI, matching tag and candidate provenance. Cloud provider provisioning and physical production qualification remain documented deployment prerequisites.
 
 ## Why?
 
@@ -43,6 +47,14 @@ Workers pull committed assignments. The scheduler never needs a worker's network
 - Atomic parameter sweeps with repetitions, idempotency, CSV/JSON exports and optional scientific PNG/PDF reports.
 - Validated dependency workflows with successful predecessor artifacts staged as downstream inputs.
 - Immutable, hashed dataset versions; streaming input transfer to read-only `/inputs` on either agent.
+- Individual accounts, private projects, roles, project quotas, audit history and verified federated sign-in.
+- Filesystem or S3-compatible objects, resumable verified uploads and bounded dataset queries/statistics.
+- Reproducible experiment provenance, replay, checkpoints, durable schedules and dynamic workflows.
+- Whole-device NVIDIA GPU reservations with real CPU/GPU execution on both agents.
+- Atomic cooperating groups with ordered barriers/reductions and whole-group failure/cancellation.
+- Stateful Python notebook sessions, standard notebook export and private bounded HTTP service requests.
+- Kernel byte/inode output quotas, independently retained outputs and explicit helper resource accounting.
+- Bounded Docker host worker pools, maintenance admission controls, verified TLS replicas and PostgreSQL recovery drills.
 - Bounded CSV, TSV, JSON, NumPy and Parquet previews, plus a streaming numerical profiling example.
 - Python SDK and CLI for scripts and notebooks; API roles, verified gRPC TLS, worker draining and deployment templates.
 - PostgreSQL snapshot backups with verified blobs, safe empty-target restore and storage auditing.
@@ -57,7 +69,7 @@ Workers pull committed assignments. The scheduler never needs a worker's network
 
 ## Reliability model
 
-**At-least-once execution.** A workload can run more than once after a partition or worker failure. Submission idempotency prevents duplicate *jobs*; it does not make workload side effects exactly once. Design outputs and external effects accordingly.
+**At-least-once execution.** A workload can run more than once after a partition or worker failure. Submission idempotency prevents duplicate _jobs_; it does not make workload side effects exactly once. Design outputs and external effects accordingly.
 
 Each attempt has a fresh lease token and worker-session ID. The default heartbeat interval is 5 seconds, worker timeout 15 seconds and lease lifetime 30 seconds. A worker's local watchdog terminates execution when its conservative lease deadline expires. The server rejects expired sessions and tokens and retries unfinished work. A killed agent cannot stop its already running container: an orphan may overlap its replacement until it exits or the agent restarts and cleans it up.
 
@@ -88,13 +100,13 @@ docker compose logs -f scheduler worker-1 worker-2 worker-cpp
 
 The one-shot migration service initializes PostgreSQL before the API, scheduler and workers start. The workload image services build the allowlisted Python and C++ images. The stack includes API, gRPC control, PostgreSQL, two Python agents, one C++ agent, Prometheus, Grafana and Jaeger.
 
-| Interface | Local address |
-|---|---|
-| Compute workspace | http://localhost:8000/ |
+| Interface             | Local address              |
+| --------------------- | -------------------------- |
+| Compute workspace     | http://localhost:8000/     |
 | OpenAPI / submit jobs | http://localhost:8000/docs |
-| Grafana dashboard | http://localhost:3000 |
-| Prometheus | http://localhost:9090 |
-| Jaeger traces | http://localhost:16686 |
+| Grafana dashboard     | http://localhost:3000      |
+| Prometheus            | http://localhost:9090      |
+| Jaeger traces         | http://localhost:16686     |
 
 Install the client and developer tooling with Python 3.12+ and [uv](https://docs.astral.sh/uv/):
 
@@ -127,8 +139,8 @@ The report command requires the `analysis` extra. Workloads can be written in an
 ```yaml
 name: wave-simulation
 image: strata/wave-solver:local
-command: [/solver, --nx, '4000', --steps, '10000', --output, /output/wave.csv]
-resources: {cpu: 1, memory_mb: 128}
+command: [/solver, --nx, "4000", --steps, "10000", --output, /output/wave.csv]
+resources: { cpu: 1, memory_mb: 128 }
 capabilities: [cpp]
 priority: 5
 max_retries: 3
@@ -165,11 +177,11 @@ See [measured results and methodology](docs/benchmarks.md). Results belong to th
 
 Measured locally on an i7-11800H, Docker Engine 29.8.1 (16 logical CPUs / 7.612 GiB VM RAM) and PostgreSQL 17.11. Each agent advertises 2 CPU / 1 GiB; jobs run seeded Monte Carlo with 100,000 samples and request 1 CPU / 128 MiB.
 
-| Configuration | Successful jobs | Successful jobs/s | Placement p95 |
-|---|---:|---:|---:|
-| 2 Python + 1 C++ agents | **1000/1000** | **3.741** | 231.146 s |
-| 1 Python agent | 100/100 | 1.617 | 52.899 s |
-| 1 C++ agent | 100/100 | 1.654 | 52.423 s |
+| Configuration           | Successful jobs | Successful jobs/s | Placement p95 |
+| ----------------------- | --------------: | ----------------: | ------------: |
+| 2 Python + 1 C++ agents |   **1000/1000** |         **3.741** |     231.146 s |
+| 1 Python agent          |         100/100 |             1.617 |      52.899 s |
+| 1 C++ agent             |         100/100 |             1.654 |      52.423 s |
 
 The 1000-job run recovered one launch failure through retry. The report also retains an earlier 998/1000 run that exposed the issue. Placement includes time waiting in the batch queue; these are single-host, single-run measurements, and the small Python/C++ difference does not establish a language advantage.
 
@@ -183,9 +195,9 @@ All exposed ports bind to loopback by default. Local development uses an open RE
 
 [PostgreSQL](docs/adr/0001-postgresql-as-source-of-truth.md) · [At-least-once](docs/adr/0002-at-least-once-execution.md) · [Leases](docs/adr/0003-worker-leases.md) · [REST and gRPC](docs/adr/0004-rest-and-grpc.md)
 
-## Roadmap
+## Release scope and validation
 
-The v2 expansion adds datasets, campaigns, workflows, a web workspace, SDK, roles/TLS and backup tooling to the released v1 execution engine. Local evidence is recorded in [v2 validation](docs/validation-v2.md), with [v1 evidence](docs/validation.md) retained separately. Future extensions include object storage/retention, GPU scheduling, elastic provisioning and stronger identity/tenant isolation. These are not implemented or measured yet. Physical multi-machine throughput and sustained operational availability still require a real deployment; this development environment has one computer.
+The v2 workspace added datasets, campaigns, workflows, a web workspace, SDK, roles/TLS and backup tooling to the v1 execution engine. Historical evidence is recorded in [v2 validation](docs/validation-v2.md), with [v1 evidence](docs/validation.md) retained separately. The prepared v3.0.0 release implements individual/federated identity, project authorization and quotas, S3-compatible storage, resumable uploads, bounded dataset exploration, experiments, dynamic/periodic workflows, GPU execution, managed groups/sessions, continuous operations and [cluster maintenance controls](docs/cluster-maintenance.md). Current acceptance and deployment requirements are tracked in the [product plan](docs/product-plan.md). Physical multi-machine throughput and sustained operational availability still require deployment evidence; this development environment has one computer.
 
 ## License
 

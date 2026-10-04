@@ -1,0 +1,19 @@
+name: Distributed reduction
+nodes: 2
+job:
+  name: Reduction rank
+  image: strata/python-workloads:local
+  command:
+    - python
+    - -c
+    - |
+      import sys, json
+      sys.path.insert(0, '/output/.strata')
+      from runtime import Collective
+      collective = Collective()
+      total = collective.reduce([float(collective.rank + 1)])[0]
+      collective.barrier()
+      open('/output/result.json', 'w').write(json.dumps({'rank': collective.rank, 'total': total}))
+  resources: { cpu: 0.5, memory_mb: 128 }
+  max_retries: 0
+  timeout_seconds: 300

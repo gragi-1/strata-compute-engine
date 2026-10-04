@@ -12,7 +12,16 @@ services:
       STRATA_ALLOWED_IMAGES: ${STRATA_ALLOWED_IMAGES:?Set the JSON image allowlist}
       STRATA_WORKER_CPU: ${STRATA_WORKER_CPU:-2}
       STRATA_WORKER_MEMORY_MB: ${STRATA_WORKER_MEMORY_MB:-1024}
+      STRATA_GPU_DISCOVERY_IMAGE: ${STRATA_GPU_DISCOVERY_IMAGE:-}
       STRATA_RPC_CA: /run/strata/ca.pem
+      STRATA_WORKER_CACHE_ROOT: /var/lib/strata/input-cache
+      STRATA_WORKER_CACHE_BYTES: ${STRATA_WORKER_CACHE_BYTES:-4294967296}
+      STRATA_STORAGE_KEEPER_IMAGE: ${STRATA_STORAGE_KEEPER_IMAGE:?Set the reviewed coordinator image digest for bounded output retention}
+      STRATA_WORKER_OUTPUT_BYTES: ${STRATA_WORKER_OUTPUT_BYTES:-67108864}
+      STRATA_WORKER_OUTPUT_INODES: ${STRATA_WORKER_OUTPUT_INODES:-4096}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${STRATA_RPC_CA_FILE:?Set a trusted CA certificate path}:/run/strata/ca.pem:ro
+      - worker-cache:/var/lib/strata/input-cache
+volumes:
+  worker-cache:

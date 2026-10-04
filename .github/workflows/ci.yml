@@ -1,23 +1,38 @@
 name: CI
-on: [push, pull_request]
+on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
 jobs:
   python:
     runs-on: ubuntu-24.04
     services:
+      s3:
+        image: ghcr.io/versity/versitygw:v1.7.0@sha256:c4cbd9d9cb8dedbb055ac788dbd02635651b9b1cebac95b095b3217231aa87ad
+        env:
+          ROOT_ACCESS_KEY: strata-test
+          ROOT_SECRET_KEY: strata-test-secret
+          VGW_BACKEND: posix
+          VGW_BACKEND_ARG: /tmp
+        ports: ["59000:7070"]
       postgres:
         image: postgres:17-bookworm
-        env: {POSTGRES_DB: strata_test, POSTGRES_USER: strata, POSTGRES_PASSWORD: strata}
-        ports: ['5432:5432']
+        env:
+          {
+            POSTGRES_DB: strata_test,
+            POSTGRES_USER: strata,
+            POSTGRES_PASSWORD: strata,
+          }
+        ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U strata -d strata_test"
           --health-interval 2s --health-timeout 2s --health-retries 30
     env:
+      STRATA_TEST_S3_ENDPOINT: http://localhost:59000
       STRATA_TEST_POSTGRES_URL: postgresql+psycopg://strata:strata@localhost:5432/strata_test
       STRATA_DATABASE_URL: postgresql+psycopg://strata:strata@localhost:5432/strata_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
       - name: Install PostgreSQL 17 client tools
         run: |
           sudo install -d /usr/share/postgresql-common/pgdg
@@ -37,42 +52,77 @@ jobs:
           echo '/usr/lib/postgresql/17/bin' >> "$GITHUB_PATH"
           /usr/lib/postgresql/17/bin/pg_dump --version
           /usr/lib/postgresql/17/bin/pg_restore --version
-      - uses: astral-sh/setup-uv@v6
-        with: {version: '0.9.18', python-version: '3.12'}
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with: { version: "0.9.18", python-version: "3.12" }
       - run: uv sync --locked --extra analysis
-      - uses: actions/setup-node@v4
-        with: {node-version: '22'}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: "22" }
       - run: node --check control_plane/web/app.js
       - run: uv run ruff check . && uv run ruff format --check . && uv run mypy
       - run: uv run alembic upgrade head && uv run alembic check
       - run: uv run pytest --cov --cov-report=xml
-      - uses: actions/upload-artifact@v4
-        with: {name: coverage, path: coverage.xml}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with: { name: coverage, path: coverage.xml }
   cpp:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
       - run: sudo apt-get update && sudo apt-get install -y libgrpc++-dev protobuf-compiler-grpc libprotobuf-dev protobuf-compiler libcurl4-openssl-dev libarchive-dev nlohmann-json3-dev
       - run: cmake -S worker_cpp -B build/cpp -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build/cpp -j2 && ctest --test-dir build/cpp --output-on-failure
   docker:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
+    services:
+      s3:
+        image: ghcr.io/versity/versitygw:v1.7.0@sha256:c4cbd9d9cb8dedbb055ac788dbd02635651b9b1cebac95b095b3217231aa87ad
+        env:
+          ROOT_ACCESS_KEY: strata-test
+          ROOT_SECRET_KEY: strata-test-secret
+          VGW_BACKEND: posix
+          VGW_BACKEND_ARG: /tmp
+        ports: ["59000:7070"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-        with: {version: '0.9.18', python-version: '3.12'}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with: { version: "0.9.18", python-version: "3.12" }
       - run: uv sync --locked
       - run: docker compose up --build -d
       - run: uv run python scripts/e2e_live.py
       - run: uv run python -m scripts.platform_e2e
+      - name: Verify live logs, replay, artifacts, kernel quotas, caches, host cleanup and elastic provisioning
+        run: uv run pytest tests/e2e/test_experiment_runtime.py tests/e2e/test_output_quotas.py tests/e2e/test_host_reaper.py tests/e2e/test_provisioning_runtime.py tests/e2e/test_managed_runtimes.py -q
+        env:
+          STRATA_TEST_DOCKER_RUNTIME: "1"
+          STRATA_TEST_CPP_IMAGE: strata/worker-cpp:local
+          STRATA_TEST_CONTROL_IMAGE: strata/control-plane:local
+          STRATA_TEST_POSTGRES_URL: postgresql+psycopg://strata:strata@localhost:55433/strata
+      - name: Build reviewed failover infrastructure
+        run: |
+          docker build -f deploy/ha/Dockerfile -t strata/postgres-ha:local .
+          docker build -f deploy/ha/gateway.Dockerfile -t strata/ha-gateway:local .
+          docker pull gcr.io/etcd-development/etcd:v3.6.15@sha256:5ed4e32061aa061f970d6500629213e8579ef17571dcf9789074966acb9afad1
+      - name: Verify real coordinator and PostgreSQL failover and quorum fencing
+        run: uv run pytest tests/e2e/test_coordinator_replicas.py tests/e2e/test_postgres_failover.py -q --junitxml=build/ha-evidence/junit.xml
+        env:
+          STRATA_TEST_DOCKER_RUNTIME: "1"
+          STRATA_TEST_POSTGRES_HA: "1"
+          STRATA_TEST_CPP_IMAGE: strata/worker-cpp:local
+          STRATA_TEST_CONTROL_IMAGE: strata/control-plane:local
+          STRATA_TEST_HA_GATEWAY_IMAGE: strata/ha-gateway:local
+          STRATA_TEST_PG_HA_IMAGE: strata/postgres-ha:local
+          STRATA_TEST_POSTGRES_URL: postgresql+psycopg://strata:strata@localhost:55433/strata
+          STRATA_TEST_S3_ENDPOINT: http://127.0.0.1:59000
+          STRATA_TEST_HA_EVIDENCE: build/ha-evidence
       - run: uv run python -m scripts.network_probe
       - run: uv run python scripts/partition_probe.py
       - run: uv run python scripts/failure_demo.py --samples 10000000 --min-duration 0
       - if: always()
         run: docker compose logs --no-color > compose.log
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: deployment-evidence
           path: |
@@ -82,5 +132,112 @@ jobs:
             build/platform-validation/*
             build/network-validation/**/evidence.json
             build/network-validation/**/*.log
+            build/ha-evidence/*
       - if: always()
         run: docker compose down -v
+  package:
+    name: package-${{ matrix.python }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      matrix: { python: ["3.12", "3.13"] }
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          {
+            POSTGRES_DB: postgres,
+            POSTGRES_USER: strata,
+            POSTGRES_PASSWORD: strata,
+          }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U strata -d postgres"
+          --health-interval 2s --health-timeout 2s --health-retries 30
+    env:
+      STRATA_TEST_POSTGRES_URL: postgresql+psycopg://strata:strata@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with: { version: "0.9.18", python-version: "${{ matrix.python }}" }
+      - run: uv sync --locked --extra analysis
+      - name: Build reproducible installable distributions
+        run: |
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          export SOURCE_DATE_EPOCH
+          uv build --out-dir build/package/dist
+          uv build --out-dir build/package/rebuild
+          uv run --no-sync python -m scripts.check_reproducibility build/package/dist build/package/rebuild
+          uv export --locked --no-dev --extra analysis --no-emit-project --quiet -o build/package/runtime-requirements.txt
+      - name: Install and serve outside the source checkout
+        run: |
+          uv run --no-sync python -m scripts.package_smoke --wheel build/package/dist/*.whl \
+            --requirements build/package/runtime-requirements.txt --output build/package/installed
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: packages-${{ matrix.python }}
+          path: |
+            build/package/dist/*
+            build/package/runtime-requirements.txt
+            build/package/installed/evidence.json
+            build/package/installed/server.log
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with: { version: "0.9.18", python-version: "3.12" }
+      - run: uv sync --locked --extra analysis
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: "22" }
+      - name: Install locked browser checks
+        working-directory: tests/browser
+        run: npm ci --ignore-scripts && npm audit --audit-level=high && npx playwright install --with-deps chromium firefox webkit
+      - name: Verify browser workflows and accessibility
+        working-directory: tests/browser
+        run: npm test
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with: { name: browser-evidence, path: "build/browser/" }
+  security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
+      - name: Validate workflow syntax and shell scripts
+        run: docker run --rm -v "$PWD:/repo:ro" -w /repo rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with: { version: "0.9.18", python-version: "3.12" }
+      - run: uv sync --locked --extra analysis
+      - name: Audit locked Python dependencies
+        run: |
+          mkdir -p build/security
+          uv export --locked --no-dev --extra analysis --no-emit-project --quiet -o build/security/runtime-requirements.txt
+          uv tool run --from pip-audit==2.10.1 pip-audit -r build/security/runtime-requirements.txt \
+            --disable-pip --require-hashes --strict --progress-spinner off --format json -o build/security/python-audit.json
+          uv tool run --from pip-audit==2.10.1 pip-audit -r deploy/ha/requirements.txt \
+            --disable-pip --require-hashes --strict --progress-spinner off --format json -o build/security/patroni-audit.json
+      - name: Build maintained runtime images
+        run: |
+          docker build -t strata/control-plane:security .
+          docker build -f worker_cpp/Dockerfile -t strata/worker-cpp:security .
+          docker build -t strata/python-workloads:security workloads/python
+          docker build -t strata/wave-solver:security workloads/wave_solver
+          docker build -f workloads/gpu/Dockerfile -t strata/gpu-smoke:security .
+          docker build -f deploy/ha/Dockerfile -t strata/postgres-ha:security .
+          docker build -f deploy/ha/gateway.Dockerfile -t strata/ha-gateway:security .
+          docker pull gcr.io/etcd-development/etcd:v3.6.15@sha256:5ed4e32061aa061f970d6500629213e8579ef17571dcf9789074966acb9afad1
+      - name: Scan immutable image IDs and generate component inventories
+        run: |
+          uv run --no-sync python -m scripts.scan_images --output build/security --cache build/trivy-cache \
+            strata/control-plane:security strata/worker-cpp:security strata/python-workloads:security \
+            strata/wave-solver:security strata/gpu-smoke:security strata/postgres-ha:security \
+            strata/ha-gateway:security gcr.io/etcd-development/etcd:v3.6.15
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with: { name: security-evidence, path: "build/security/*" }

@@ -1,5 +1,7 @@
 # Publishing Strata v2.0.0
 
+This is the historical v2 procedure. For the current self-hosted expansion, use [the v3 publication procedure](publishing-v3.md), which includes the expanded CI and provenance requirements.
+
 Release title: **Strata v2.0.0: Compute Workspace**.
 
 Release notes: [v2.0.0](releases/v2.0.0.md). Repository descriptions, commit messages, tag messages, release titles and release notes stay in English.

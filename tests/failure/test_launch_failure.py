@@ -17,11 +17,20 @@ def test_container_failure_before_start_retries_and_releases_slot(service):
 
 def test_agent_reports_uncertain_launch_without_stopping_other_jobs():
     transport = MagicMock()
+    transport.session_id = "s"
+    transport.call.side_effect = lambda method, *args: (
+        pb.PollReply()
+        if method == "Poll"
+        else pb.HeartbeatReply()
+        if method == "Heartbeat"
+        else pb.Empty()
+    )
     transport.credentials.return_value = pb.AttemptRequest(
         attempt_id="a", session_id="s", lease_token="token"
     )
     executor = MagicMock()
     executor.create.return_value.start.side_effect = TimeoutError("Docker start response lost")
+    executor.create.return_value.status = "unknown"
     agent = Agent(transport, executor, "worker", 2, 1024, Settings())
     a = pb.Assignment(
         attempt_id="a",
@@ -39,4 +48,5 @@ def test_agent_reports_uncertain_launch_without_stopping_other_jobs():
     method, request = transport.call.call_args.args
     assert method == "Complete" and request.outcome == pb.FAILED
     assert request.exit_code == -1
+    executor.create.return_value.start.assert_called_once()
     executor.stop.assert_not_called()

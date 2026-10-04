@@ -1,0 +1,59 @@
+groups:
+  - name: strata-operations
+    rules:
+      - alert: StrataCoordinatorUnavailable
+        expr: up{job="strata"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: Strata coordinator cannot be scraped
+          description: Check API readiness, database connectivity and deployment health.
+      - alert: StrataNoExecutionCapacity
+        expr: queue_depth > 0 and strata_live_workers == 0
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: Jobs are waiting without live workers
+          description: Inspect agent connectivity and capabilities before increasing queue limits.
+      - alert: StrataExpiredLeasesNotRecovered
+        expr: strata_expired_active_leases > 0
+        for: 30s
+        labels: {severity: critical}
+        annotations:
+          summary: Expired attempts remain active
+          description: Check scheduler liveness and PostgreSQL lock contention.
+      - alert: StrataOperationFailed
+        expr: strata_operation_success == 0
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: A supervised Strata operation is failing
+          description: Inspect the administrator operations view and the operations service log.
+      - alert: StrataBackupOverdue
+        expr: strata_operation_success_age_seconds{operation="backup"} > 129600
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: No successful Strata backup within 36 hours
+          description: Verify destination capacity, PostgreSQL client tools and restore drill errors. Adjust this threshold for a different configured backup interval.
+      - alert: StrataWebhookDeliveryFailed
+        expr: strata_webhook_deliveries{status="DEAD"} > 0
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: Webhook deliveries exhausted their attempts
+          description: Inspect receiver configuration and delivery history, then explicitly retry when corrected.
+      - alert: StrataPoolControllerUnavailable
+        expr: strata_pool_controller_age_seconds > 180
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: An enabled worker pool controller is not checking in
+          description: Inspect the host provisioner and PostgreSQL connectivity. Existing workers retain their execution leases.
+      - alert: StrataPoolReconcileFailed
+        expr: strata_pool_error == 1
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: A worker pool has an unresolved provisioning error
+          description: Inspect the platform administrator pool view, Docker connectivity and immutable image availability.

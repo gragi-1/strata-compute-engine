@@ -14,9 +14,17 @@
       <nav aria-label="Main navigation">
         <button data-page="overview">Overview</button
         ><button data-page="campaigns">Campaigns</button
+        ><button data-page="experiments">Experiments</button
+        ><button data-page="schedules">Schedules</button
+        ><button data-page="webhooks">Webhooks</button
         ><button data-page="jobs">Jobs</button
+        ><button data-page="compute-groups">Compute groups</button
+        ><button data-page="interactive-sessions">Interactive sessions</button
         ><button data-page="datasets">Datasets</button
-        ><button data-page="workers">Workers</button>
+        ><button data-page="workers">Workers</button
+        ><button data-page="account" id="account-nav" hidden>
+          Account & projects
+        </button>
       </nav>
       <footer>
         <span id="connection">Connecting…</span
@@ -33,12 +41,23 @@
             Run work. Keep the evidence. Repeat with confidence.
           </p>
         </div>
-        <button id="refresh">Refresh</button>
+        <div class="row-actions">
+          <label id="project-label" hidden
+            >Project
+            <select id="project-select" aria-label="Active project"></select
+          ></label>
+          <button id="sign-out" hidden>Sign out</button>
+          <button id="refresh">Refresh</button>
+        </div>
       </header>
       <div id="notice" role="status" hidden></div>
       <section id="content" aria-live="polite"></section>
     </main>
-    <dialog id="modal">
+    <dialog
+      id="modal"
+      aria-labelledby="dialog-title"
+      aria-describedby="dialog-help"
+    >
       <form id="editor">
         <div class="dialog-head">
           <h2 id="dialog-title">New job</h2>
@@ -53,18 +72,35 @@
         </div>
       </form>
     </dialog>
-    <dialog id="login">
+    <dialog
+      id="login"
+      aria-labelledby="login-title"
+      aria-describedby="login-help"
+    >
       <form id="login-form">
-        <h2>Connect to your workspace</h2>
-        <p>
+        <h2 id="login-title">Connect to your workspace</h2>
+        <p id="login-help">
           Enter an API key supplied by your administrator. Local development
           mode also allows an empty key.
         </p>
-        <label
+        <label id="username-label" hidden
+          >Username<input id="username" autocomplete="username" maxlength="128"
+        /></label>
+        <label id="password-label" hidden
+          >Password<input
+            id="password"
+            type="password"
+            autocomplete="current-password"
+            maxlength="1024"
+        /></label>
+        <label id="key-label"
           >API key<input id="key" type="password" autocomplete="off"
         /></label>
         <p id="login-error" role="alert"></p>
         <button class="primary" type="submit">Connect</button>
+        <a id="oidc-login" href="/auth/oidc/start" hidden
+          >Sign in with your identity provider</a
+        >
       </form>
     </dialog>
   </body>

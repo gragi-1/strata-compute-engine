@@ -1,6 +1,16 @@
 import json
 import logging
+import re
 from datetime import UTC, datetime
+
+
+def database_failure(exc: BaseException) -> str:
+    """Useful fault classification without SQL, connection URLs or driver error messages."""
+    original = getattr(exc, "orig", None)
+    code = getattr(original, "sqlstate", None)
+    if isinstance(code, str) and re.fullmatch(r"[0-9A-Z]{5}", code):
+        return f"{type(exc).__name__} sqlstate={code}"
+    return type(exc).__name__
 
 
 class JSONFormatter(logging.Formatter):

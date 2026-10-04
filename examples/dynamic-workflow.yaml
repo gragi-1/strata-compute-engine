@@ -1,0 +1,39 @@
+name: Adaptive numerical study
+nodes:
+  generate:
+    name: Generate experiment parameters
+    image: strata/python-workloads:local
+    command:
+      - python
+      - -c
+      - >-
+        from pathlib import Path;
+        Path('/output/parameters.json').write_text('[{"seed":41},{"seed":42}]')
+    resources: {cpu: 1, memory_mb: 128}
+    max_retries: 0
+  analyze:
+    name: Compare simulation results
+    image: strata/python-workloads:local
+    command:
+      - python
+      - -c
+      - >-
+        import glob,json;
+        from pathlib import Path;
+        values=[json.loads(Path(p).read_text()) for p in glob.glob('/inputs/results-*/*.json')];
+        Path('/output/result.json').write_text(json.dumps({'runs':len(values),'estimates':values}))
+    artifact_inputs:
+      - {job_id: experiments, name: result.json, alias: results}
+    resources: {cpu: 1, memory_mb: 128}
+    max_retries: 0
+expansions:
+  experiments:
+    source: generate
+    artifact: parameters.json
+    max_jobs: 100
+    template:
+      name: Monte Carlo simulation
+      image: strata/python-workloads:local
+      command: [python, /app/main.py, monte-carlo, --samples, "100000", --seed, "${seed}"]
+      resources: {cpu: 1, memory_mb: 128}
+      max_retries: 1

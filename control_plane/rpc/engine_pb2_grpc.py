@@ -80,6 +80,21 @@ class WorkerControlStub:
                 request_serializer=engine__pb2.ReadInputRequest.SerializeToString,
                 response_deserializer=engine__pb2.InputChunk.FromString,
                 _registered_method=True)
+        self.Cluster = channel.unary_unary(
+                '/strata.v1.WorkerControl/Cluster',
+                request_serializer=engine__pb2.Empty.SerializeToString,
+                response_deserializer=engine__pb2.ClusterReply.FromString,
+                _registered_method=True)
+        self.InspectOrphans = channel.unary_unary(
+                '/strata.v1.WorkerControl/InspectOrphans',
+                request_serializer=engine__pb2.OrphanRequest.SerializeToString,
+                response_deserializer=engine__pb2.OrphanReply.FromString,
+                _registered_method=True)
+        self.RuntimeExchange = channel.unary_unary(
+                '/strata.v1.WorkerControl/RuntimeExchange',
+                request_serializer=engine__pb2.RuntimeRequest.SerializeToString,
+                response_deserializer=engine__pb2.RuntimeReply.FromString,
+                _registered_method=True)
 
 
 class WorkerControlServicer:
@@ -140,6 +155,25 @@ class WorkerControlServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Cluster(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def InspectOrphans(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RuntimeExchange(self, request, context):
+        """Bounded workload IPC; credentials stay in the trusted agent.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_WorkerControlServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -187,6 +221,21 @@ def add_WorkerControlServicer_to_server(servicer, server):
                     servicer.ReadInput,
                     request_deserializer=engine__pb2.ReadInputRequest.FromString,
                     response_serializer=engine__pb2.InputChunk.SerializeToString,
+            ),
+            'Cluster': grpc.unary_unary_rpc_method_handler(
+                    servicer.Cluster,
+                    request_deserializer=engine__pb2.Empty.FromString,
+                    response_serializer=engine__pb2.ClusterReply.SerializeToString,
+            ),
+            'InspectOrphans': grpc.unary_unary_rpc_method_handler(
+                    servicer.InspectOrphans,
+                    request_deserializer=engine__pb2.OrphanRequest.FromString,
+                    response_serializer=engine__pb2.OrphanReply.SerializeToString,
+            ),
+            'RuntimeExchange': grpc.unary_unary_rpc_method_handler(
+                    servicer.RuntimeExchange,
+                    request_deserializer=engine__pb2.RuntimeRequest.FromString,
+                    response_serializer=engine__pb2.RuntimeReply.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -433,6 +482,87 @@ class WorkerControl:
             '/strata.v1.WorkerControl/ReadInput',
             engine__pb2.ReadInputRequest.SerializeToString,
             engine__pb2.InputChunk.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Cluster(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/strata.v1.WorkerControl/Cluster',
+            engine__pb2.Empty.SerializeToString,
+            engine__pb2.ClusterReply.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def InspectOrphans(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/strata.v1.WorkerControl/InspectOrphans',
+            engine__pb2.OrphanRequest.SerializeToString,
+            engine__pb2.OrphanReply.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RuntimeExchange(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/strata.v1.WorkerControl/RuntimeExchange',
+            engine__pb2.RuntimeRequest.SerializeToString,
+            engine__pb2.RuntimeReply.FromString,
             options,
             channel_credentials,
             insecure,

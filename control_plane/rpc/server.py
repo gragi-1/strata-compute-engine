@@ -8,14 +8,16 @@ from typing import Any, TypeVar
 import grpc
 from opentelemetry.propagate import extract
 from pydantic import ValidationError
+from sqlalchemy.exc import SQLAlchemyError
 
 from control_plane.config import Settings
 from control_plane.database import make_engine, sessions
-from control_plane.domain import JobStatus
-from control_plane.logging import configure_logging
+from control_plane.domain import ACTIVE, JobStatus
+from control_plane.logging import configure_logging, database_failure
+from control_plane.models import Admission, Attempt
 from control_plane.rpc import engine_pb2 as pb
 from control_plane.rpc import engine_pb2_grpc as rpc
-from control_plane.schemas import Completion, Heartbeat, LeaseRef, WorkerRegister
+from control_plane.schemas import Completion, GPURegistration, Heartbeat, LeaseRef, WorkerRegister
 from control_plane.services import DomainError, EngineService
 from control_plane.tracing import configure_tracing, tracer
 
@@ -27,12 +29,60 @@ ERRORS = {
     413: grpc.StatusCode.RESOURCE_EXHAUSTED,
     422: grpc.StatusCode.INVALID_ARGUMENT,
     429: grpc.StatusCode.RESOURCE_EXHAUSTED,
+    503: grpc.StatusCode.UNAVAILABLE,
 }
 
 
 class WorkerControl(rpc.WorkerControlServicer):  # type: ignore[misc]
     def __init__(self, service: EngineService) -> None:
         self.svc = service
+
+    def cluster_id(self) -> str:
+        with self.svc.factory() as session:
+            admission = session.get(Admission, 1)
+            if admission is None:
+                raise DomainError(503, "cluster identity is unavailable")
+            return admission.cluster_id
+
+    def Cluster(self, request: Any, context: Any) -> Any:
+        return self.invoke(
+            context, "Cluster", lambda: pb.ClusterReply(cluster_id=self.cluster_id())
+        )
+
+    def InspectOrphans(self, request: Any, context: Any) -> Any:
+        def action() -> Any:
+            if not 1 <= len(request.candidates) <= 500:
+                raise DomainError(422, "orphan inspection requires 1..500 candidates")
+            decisions = []
+            for candidate in request.candidates:
+                if not 1 <= len(candidate.worker_id) <= 128 or len(candidate.attempt_id) != 36:
+                    raise DomainError(422, "invalid orphan candidate")
+                with self.svc.factory.begin() as session:
+                    attempt = session.get(Attempt, candidate.attempt_id)
+                    removable = True
+                    if attempt is not None:
+                        # Same lock order as lease renewal. Re-read after concurrent renewals.
+                        job = self.svc.job(session, attempt.job_id, lock=True)
+                        worker = self.svc.worker(session, attempt.worker_id, lock=True)
+                        session.refresh(attempt)
+                        now = self.svc.now(session)
+                        removable = (
+                            attempt.worker_id != candidate.worker_id
+                            or attempt.status not in ACTIVE
+                            or job.status not in ACTIVE
+                            or attempt.worker_session != worker.session_id
+                            or attempt.lease_expires_at <= now
+                        )
+                    decisions.append(
+                        pb.OrphanDecision(
+                            worker_id=candidate.worker_id,
+                            attempt_id=candidate.attempt_id,
+                            remove=removable,
+                        )
+                    )
+            return pb.OrphanReply(decisions=decisions)
+
+        return self.invoke(context, "InspectOrphans", action)
 
     def invoke(self, context: Any, name: str, action: Callable[[], T]) -> T:
         metadata = dict(context.invocation_metadata())
@@ -41,12 +91,20 @@ class WorkerControl(rpc.WorkerControlServicer):  # type: ignore[misc]
         ):
             context.abort(grpc.StatusCode.UNAUTHENTICATED, "invalid worker token")
         try:
-            with tracer.start_as_current_span(f"rpc.{name}", context=extract(metadata)):
+            with tracer.start_as_current_span(
+                f"rpc.{name}",
+                context=extract(metadata),
+                record_exception=False,
+                set_status_on_exception=False,
+            ):
                 return action()
         except DomainError as exc:
             context.abort(ERRORS.get(exc.code, grpc.StatusCode.INTERNAL), str(exc))
         except (ValidationError, ValueError) as exc:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        except SQLAlchemyError as exc:
+            logging.getLogger(__name__).warning("rpc_store_failed: %s", database_failure(exc))
+            context.abort(grpc.StatusCode.UNAVAILABLE, "durable store is temporarily unavailable")
         except Exception:
             logging.getLogger(__name__).exception("rpc_failed")
             context.abort(grpc.StatusCode.INTERNAL, "internal error")
@@ -60,6 +118,10 @@ class WorkerControl(rpc.WorkerControlServicer):  # type: ignore[misc]
                     cpu_total=request.cpu_total,
                     memory_total_mb=request.memory_total_mb,
                     capabilities=list(request.capabilities),
+                    gpus=[
+                        GPURegistration(id=gpu.id, name=gpu.name, memory_mb=gpu.memory_mb)
+                        for gpu in request.gpus
+                    ],
                 )
             )
             return pb.RegisterReply(
@@ -67,6 +129,7 @@ class WorkerControl(rpc.WorkerControlServicer):  # type: ignore[misc]
                 heartbeat_interval=self.svc.settings.heartbeat_interval,
                 lease_seconds=self.svc.settings.lease_seconds,
                 termination_grace_seconds=self.svc.settings.termination_grace_seconds,
+                cluster_id=self.cluster_id(),
             )
 
         return self.invoke(context, "Register", action)
@@ -101,9 +164,24 @@ class WorkerControl(rpc.WorkerControlServicer):  # type: ignore[misc]
             ),
         )
 
+    def RuntimeExchange(self, request: Any, context: Any) -> Any:
+        from control_plane.runtimes import RuntimeService
+
+        def action() -> Any:
+            c = request.credentials
+            return pb.RuntimeReply(
+                message=RuntimeService(self.svc).exchange(
+                    c.attempt_id, c.session_id, c.lease_token, request.message
+                )
+            )
+
+        return self.invoke(context, "RuntimeExchange", action)
+
     def Start(self, request: Any, context: Any) -> Any:
         def action() -> Any:
-            self.svc.start(request.attempt_id, request.session_id, request.lease_token)
+            self.svc.start(
+                request.attempt_id, request.session_id, request.lease_token, request.image_digest
+            )
             return pb.Empty()
 
         return self.invoke(context, "Start", action)
@@ -160,26 +238,30 @@ class WorkerControl(rpc.WorkerControlServicer):  # type: ignore[misc]
         )
 
     def ReadInput(self, request: Any, context: Any) -> Iterator[Any]:
-        from control_plane.inputs import input_path
+        from contextlib import ExitStack
+
+        from control_plane.inputs import open_input
 
         # Short bounded range streams leave leases renewable between transfers.
-        def action() -> tuple[Any, int]:
-            if request.offset < 0 or not 1 <= request.max_bytes <= 4 * 1024 * 1024:
-                raise DomainError(422, "invalid input byte range")
-            return input_path(self.svc, request.credentials, request.sha256)
+        with ExitStack() as pins:
 
-        path, size = self.invoke(context, "ReadInput", action)
-        if request.offset > size:
-            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "offset exceeds file size")
-        remaining = min(request.max_bytes, size - request.offset)
-        with path.open("rb") as stream:
-            stream.seek(request.offset)
-            while remaining and context.is_active():
-                chunk = stream.read(min(65536, remaining))
-                if not chunk:
-                    context.abort(grpc.StatusCode.DATA_LOSS, "input file is truncated")
-                remaining -= len(chunk)
-                yield pb.InputChunk(content=chunk)
+            def action() -> tuple[Any, int]:
+                if request.offset < 0 or not 1 <= request.max_bytes <= 4 * 1024 * 1024:
+                    raise DomainError(422, "invalid input byte range")
+                return pins.enter_context(open_input(self.svc, request.credentials, request.sha256))
+
+            path, size = self.invoke(context, "ReadInput", action)
+            if request.offset > size:
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT, "offset exceeds file size")
+            remaining = min(request.max_bytes, size - request.offset)
+            with path.open("rb") as stream:
+                stream.seek(request.offset)
+                while remaining and context.is_active():
+                    chunk = stream.read(min(65536, remaining))
+                    if not chunk:
+                        context.abort(grpc.StatusCode.DATA_LOSS, "input file is truncated")
+                    remaining -= len(chunk)
+                    yield pb.InputChunk(content=chunk)
 
 
 def make_server(service: EngineService, address: str = "[::]:50051") -> Any:

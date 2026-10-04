@@ -41,6 +41,10 @@ def install(app: typer.Typer) -> None:
     def campaign_status(campaign_id: str) -> None:
         display(request("GET", f"/campaigns/{campaign_id}").json())
 
+    @app.command("workflow-expansions")
+    def workflow_expansions(campaign_id: str) -> None:
+        display(request("GET", f"/campaigns/{campaign_id}/expansions").json())
+
     @app.command("dataset-upload")
     def dataset_upload(name: str, files: list[Path], label: str = "v1") -> None:
         """Create a dataset, stream its files and seal the version."""
@@ -53,9 +57,63 @@ def install(app: typer.Typer) -> None:
     def datasets() -> None:
         display(request("GET", "/datasets").json())
 
+    @app.command("upload-start")
+    def upload_start(version_id: str, file: Path) -> None:
+        """Reserve a resumable transfer and return its durable upload identifier."""
+        import hashlib
+
+        with file.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        display(
+            request(
+                "POST",
+                f"/dataset-versions/{version_id}/uploads",
+                json={
+                    "name": file.name,
+                    "total_bytes": file.stat().st_size,
+                    "sha256": digest,
+                },
+            ).json()
+        )
+
+    @app.command("upload-file")
+    def upload_file(version_id: str, file: Path, upload_id: str | None = None) -> None:
+        """Resume a transfer, stream remaining verified chunks and complete the file."""
+        from strata_sdk import Client
+
+        with Client() as client:
+            display(client.upload_resumable(version_id, file, upload_id))
+
+    @app.command("uploads")
+    def uploads() -> None:
+        display(request("GET", "/uploads").json())
+
+    @app.command("cancel-upload")
+    def cancel_upload(upload_id: str) -> None:
+        request("DELETE", f"/uploads/{upload_id}")
+        typer.echo("Upload cancelled; its reservation has been released.")
+
     @app.command("preview")
     def preview(file_id: str, limit: int = 50) -> None:
         display(request("GET", f"/dataset-files/{file_id}/preview", params={"limit": limit}).json())
+
+    @app.command("dataset-query")
+    def dataset_query(
+        file_id: str, specification: Path | None = None, offset: int = 0, limit: int = 50
+    ) -> None:
+        """Read a bounded page using an optional typed JSON/YAML query specification."""
+        body = (
+            yaml.safe_load(specification.read_text(encoding="utf-8"))
+            if specification
+            else {"offset": offset, "limit": limit}
+        )
+        display(request("POST", f"/dataset-files/{file_id}/query", json=body).json())
+
+    @app.command("dataset-statistics")
+    def dataset_statistics(file_id: str, specification: Path | None = None) -> None:
+        """Summarize all matching rows without sending the full dataset to the client."""
+        body = yaml.safe_load(specification.read_text(encoding="utf-8")) if specification else {}
+        display(request("POST", f"/dataset-files/{file_id}/statistics", json=body).json())
 
     @app.command("report")
     def report(

@@ -150,7 +150,7 @@ def test_dataset_storage_exhaustion_returns_503_and_keeps_draft(service):
     draft = datasets.version(dataset.id, "v1")
     client = TestClient(create_app(service.settings, service))
     with patch(
-        "control_plane.resource_api.tempfile.TemporaryFile",
+        "control_plane.resource_api.BlobStore.temporary",
         side_effect=OSError(errno.ENOSPC, "full"),
     ):
         response = client.put(f"/dataset-versions/{draft.id}/files/data.csv", content=b"x\n1\n")
